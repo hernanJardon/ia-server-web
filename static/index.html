@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel Ollama</title>
+<link rel="icon" href="data:,">
+<link rel="preload" href="fonts/barlow-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/barlow-semi-condensed-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
+<script>
+  try { var t = localStorage.getItem("theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<header class="rail" id="rail">
+  <div class="rail-head">
+    <h1 class="brand">Panel Ollama</h1>
+    <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="nav">Menú</button>
+  </div>
+  <nav id="nav" aria-label="Secciones">
+    <a href="#modelos">Modelos <span class="count" id="nav-count-models"></span></a>
+    <a href="#motores">Motores <span class="count" id="nav-count-engines"></span></a>
+    <a href="#descargar">Descargar</a>
+    <a href="#subir">Subir GGUF</a>
+    <a href="#cuantizar">Cuantizar</a>
+    <a href="#variante">Crear variante</a>
+    <a href="#chat">Chat de prueba</a>
+    <a href="#entrenamiento">Entrenamiento <span class="count" id="nav-count-jobs"></span></a>
+    <a href="#registros">Registros</a>
+  </nav>
+  <div class="rail-foot">
+    <div id="server-line">Conectando con Ollama…</div>
+    <button id="theme-btn" type="button">Tema: sistema</button>
+  </div>
+</header>
+
+<main id="main">
+  <div id="notice" aria-live="polite"></div>
+
+  <section class="block" id="ops" hidden aria-labelledby="ops-title">
+    <h2 id="ops-title" class="sub">Operaciones</h2>
+    <div id="ops-list"></div>
+  </section>
+
+  <!-- ===================================================== MODELOS -->
+  <section data-view="modelos" aria-labelledby="t-modelos">
+    <h2 id="t-modelos">Modelos</h2>
+    <p class="lede">Lo que ocupa cada GPU, lo que está cargado y lo que tienes instalado. El veredicto estima cuántas tarjetas necesita cada modelo con el contexto que usa el servidor, caché incluida; en los modelos cargados es lo que mide Ollama.</p>
+
+    <div class="block" aria-labelledby="t-vram">
+      <h3 id="t-vram">Memoria de vídeo</h3>
+      <div id="gpus"><div class="skeleton w60"></div><div class="skeleton w40"></div></div>
+      <dl class="spec host" id="host"></dl>
+    </div>
+
+    <div class="block" aria-labelledby="t-loaded">
+      <div class="toolbar">
+        <h3 id="t-loaded">En memoria</h3>
+        <button class="quiet" id="unload-all" type="button" hidden>Descargar todos de memoria</button>
+      </div>
+      <div id="loaded"><div class="skeleton w60"></div></div>
+    </div>
+
+    <div class="block" aria-labelledby="t-installed">
+      <div class="toolbar">
+        <h3 id="t-installed">Instalados</h3>
+        <label>Filtrar por nombre
+          <input id="filter" type="search" placeholder="qwen, gemma, :7b…" autocomplete="off">
+        </label>
+      </div>
+      <div id="installed"><div class="skeleton w60"></div><div class="skeleton"></div><div class="skeleton w40"></div></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== MOTORES -->
+  <section data-view="motores" hidden aria-labelledby="t-motores">
+    <h2 id="t-motores">Motores</h2>
+    <p class="lede">Sirve un modelo fuera de Ollama, en las GPU que elijas y con su propia API compatible con OpenAI. llama.cpp usa el GGUF que Ollama ya tiene descargado; vLLM descarga el modelo de Hugging Face y lo reparte con paralelismo de tensor.</p>
+
+    <form class="block" id="engine-form" aria-labelledby="t-engine-new">
+      <h3 id="t-engine-new">Nueva instancia</h3>
+      <fieldset class="seg" id="engine-kind">
+        <legend>Motor</legend>
+        <label><input type="radio" name="engine" value="llama.cpp" checked><span>llama.cpp</span></label>
+        <label><input type="radio" name="engine" value="vllm"><span>vLLM</span></label>
+      </fieldset>
+      <div id="engine-env" class="engine-env"></div>
+      <div id="engine-fields">
+        <div class="form" style="margin-top:14px">
+          <label data-engine="llama.cpp">Modelo de Ollama <select name="ollama_model"></select></label>
+          <label data-engine="vllm" hidden>Modelo de Hugging Face
+            <input name="hf_model" placeholder="Qwen/Qwen2.5-14B-Instruct-AWQ" autocomplete="off" spellcheck="false">
+          </label>
+          <label>Nombre en la API (alias)
+            <input name="alias" placeholder="el del modelo" autocomplete="off" spellcheck="false">
+          </label>
+          <label>Contexto por petición (tokens) <input name="ctx" type="number" value="8192" min="256" step="1"></label>
+          <label>Peticiones simultáneas <input name="parallel" type="number" value="1" min="1" max="64" step="1"></label>
+          <label data-engine="llama.cpp">Capas en GPU <input name="ngl" type="number" value="999" min="0" max="999" step="1"></label>
+          <label data-engine="llama.cpp">Reparto entre GPU
+            <select name="split"><option value="layer">Por capas (recomendado)</option><option value="row">Por filas</option></select>
+          </label>
+          <label data-engine="vllm" hidden>Fracción de VRAM a reservar <input name="mem_util" type="number" value="0.9" min="0.1" max="0.98" step="any"></label>
+          <label class="check" data-engine="llama.cpp"><input type="checkbox" name="flash_attn" checked> Flash attention</label>
+          <label class="wide">Argumentos extra (avanzado)
+            <input name="extra" class="code" placeholder="--cache-type-k q8_0" autocomplete="off" spellcheck="false">
+          </label>
+        </div>
+        <fieldset class="gpu-pick" id="engine-gpus">
+          <legend>GPU</legend>
+        </fieldset>
+        <p class="note" id="engine-fit"></p>
+        <div class="actions"><button class="primary" type="submit" id="engine-submit">Iniciar instancia</button></div>
+      </div>
+    </form>
+
+    <div class="block" aria-labelledby="t-engine-list">
+      <h3 id="t-engine-list">Instancias</h3>
+      <div id="engines"><div class="skeleton w60"></div></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== DESCARGAR -->
+  <section data-view="descargar" hidden aria-labelledby="t-descargar">
+    <h2 id="t-descargar">Descargar un modelo</h2>
+    <p class="lede">Del registro de Ollama (<code>qwen2.5:14b</code>, <code>llama3.2:3b-instruct-fp16</code>) o un GGUF de Hugging Face (<code>hf.co/usuario/repo:Q4_K_M</code>). Si cancelas, lo ya descargado se conserva y la siguiente vez continúa.</p>
+    <form class="block" id="pull-form">
+      <div class="form">
+        <label class="wide">Nombre del modelo
+          <input name="model" required placeholder="por ejemplo qwen2.5:14b" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Descargar modelo</button></div>
+      <p class="note">Para cuantizar a tu gusto, descarga la variante <code>-fp16</code> del modelo: Ollama solo cuantiza desde F16 o F32.</p>
+    </form>
+  </section>
+
+  <!-- ===================================================== SUBIR -->
+  <section data-view="subir" hidden aria-labelledby="t-subir">
+    <h2 id="t-subir">Subir un GGUF</h2>
+    <p class="lede">El archivo viaja al panel, se registra en Ollama y se crea el modelo. La plantilla de chat se toma de los metadatos del GGUF.</p>
+    <form class="block" id="upload-form">
+      <div class="form">
+        <label>Archivo .gguf
+          <input name="file" type="file" accept=".gguf" required>
+        </label>
+        <label>Nombre del modelo en Ollama
+          <input name="model" required placeholder="mi-modelo:q5" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="wide">Prompt de sistema (opcional)
+          <textarea name="system" rows="3" placeholder="Eres un asistente que responde en español."></textarea>
+        </label>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Subir y crear modelo</button></div>
+    </form>
+  </section>
+
+  <!-- ===================================================== CUANTIZAR -->
+  <section data-view="cuantizar" hidden aria-labelledby="t-cuantizar">
+    <h2 id="t-cuantizar">Cuantizar</h2>
+    <p class="lede">Crea una copia del modelo con otro número de bits por peso usando <code>llama-quantize</code> de llama.cpp. La copia conserva la plantilla, el prompt de sistema y los parámetros del original. Lo ideal es partir de un modelo F16 o BF16.</p>
+    <div id="quant-env"><div class="skeleton w60"></div></div>
+    <form class="block" id="quant-form" hidden>
+      <div class="form">
+        <label>Modelo de origen
+          <select name="from" required></select>
+        </label>
+        <label>Tipo de cuantización
+          <select name="quantize">
+            <option value="Q2_K">Q2_K (mínimo tamaño, pérdida grande)</option>
+            <option value="Q3_K_S">Q3_K_S</option>
+            <option value="Q3_K_M">Q3_K_M</option>
+            <option value="Q3_K_L">Q3_K_L</option>
+            <option value="Q4_0">Q4_0</option>
+            <option value="Q4_K_S">Q4_K_S</option>
+            <option value="Q4_K_M" selected>Q4_K_M (equilibrio, recomendado)</option>
+            <option value="IQ4_XS">IQ4_XS</option>
+            <option value="Q5_0">Q5_0</option>
+            <option value="Q5_K_S">Q5_K_S</option>
+            <option value="Q5_K_M">Q5_K_M</option>
+            <option value="Q6_K">Q6_K</option>
+            <option value="Q8_0">Q8_0 (casi sin pérdida)</option>
+            <option value="F16">F16</option>
+            <option value="BF16">BF16</option>
+          </select>
+        </label>
+        <label>Nombre del resultado
+          <input name="model" required autocomplete="off" spellcheck="false">
+        </label>
+        <label class="check wide" id="requant-wrap" hidden><input type="checkbox" name="allow_requantize">
+          El origen ya está cuantizado: recuantizar igualmente (se pierde calidad respecto a partir de F16)</label>
+      </div>
+      <dl class="spec" id="quant-estimate" style="margin-top:14px"></dl>
+      <div class="actions"><button class="primary" type="submit">Cuantizar modelo</button></div>
+      <p class="note">Se ejecuta en la CPU del servidor y tarda de uno a varios minutos según el tamaño. Necesita espacio libre en disco para el resultado.</p>
+    </form>
+    <div class="block" aria-labelledby="t-qjobs">
+      <h3 id="t-qjobs">Cuantizaciones</h3>
+      <div id="quant-jobs"><div class="skeleton w60"></div></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== VARIANTE -->
+  <section data-view="variante" hidden aria-labelledby="t-variante">
+    <h2 id="t-variante">Crear variante</h2>
+    <p class="lede">Un modelo nuevo que reutiliza los pesos de otro (no ocupa disco extra) con su propio prompt de sistema y parámetros. Equivale a un Modelfile con <code>FROM</code>, <code>SYSTEM</code> y <code>PARAMETER</code>.</p>
+    <form class="block" id="variant-form">
+      <div class="form">
+        <label>Basado en
+          <select name="from" required></select>
+        </label>
+        <label>Nombre de la variante
+          <input name="model" required placeholder="qwen-revisor:latest" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="wide">Prompt de sistema
+          <textarea name="system" rows="4" placeholder="Revisas código Python y señalas errores concretos."></textarea>
+        </label>
+        <label>Temperatura <input name="temperature" type="number" step="any" min="0" max="2" placeholder="por defecto"></label>
+        <label>top_p <input name="top_p" type="number" step="any" min="0" max="1" placeholder="por defecto"></label>
+        <label>Contexto (num_ctx) <input name="num_ctx" type="number" step="1" min="256" placeholder="por defecto"></label>
+        <label>repeat_penalty <input name="repeat_penalty" type="number" step="any" min="0" placeholder="por defecto"></label>
+        <label class="wide">Secuencias de parada, una por línea
+          <textarea name="stop" rows="2" class="code"></textarea>
+        </label>
+        <details class="wide">
+          <summary>Plantilla de prompt (avanzado)</summary>
+          <label style="margin-top:8px">Sustituye la plantilla del modelo base. Déjala vacía para heredarla.
+            <textarea name="template" rows="6" class="code" spellcheck="false"></textarea>
+          </label>
+        </details>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Crear variante</button></div>
+    </form>
+  </section>
+
+  <!-- ===================================================== CHAT -->
+  <section data-view="chat" hidden aria-labelledby="t-chat">
+    <h2 id="t-chat">Chat de prueba</h2>
+    <p class="lede">Para comprobar un modelo recién creado o entrenado. La conversación no se guarda y el modelo se descarga de memoria 5 minutos después del último mensaje.</p>
+    <div class="block">
+      <div class="form">
+        <label>Modelo <select id="chat-model"></select></label>
+        <label>Temperatura <input id="chat-temp" type="number" step="any" min="0" max="2" placeholder="la del modelo"></label>
+        <label>Contexto (num_ctx) <input id="chat-ctx" type="number" step="1" min="256" placeholder="el del modelo"></label>
+        <label class="check" id="chat-think-wrap" hidden><input id="chat-think" type="checkbox"> Mostrar razonamiento</label>
+        <label class="wide">Prompt de sistema (opcional)
+          <textarea id="chat-system" rows="2"></textarea>
+        </label>
+      </div>
+      <div class="chat-log" id="chat-log" aria-live="polite">
+        <p class="empty" id="chat-empty">Escribe un mensaje para empezar. Ctrl+Enter lo envía.</p>
+      </div>
+      <form id="chat-form">
+        <label>Mensaje
+          <textarea id="chat-input" rows="3" required></textarea>
+        </label>
+        <div class="actions">
+          <button class="primary" type="submit" id="chat-send">Enviar</button>
+          <button type="button" id="chat-stop" disabled>Detener</button>
+          <label class="check" id="chat-image-wrap" hidden>Imagen <input id="chat-image" type="file" accept="image/*"></label>
+          <button type="button" class="quiet apart" id="chat-clear">Vaciar conversación</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===================================================== ENTRENAMIENTO -->
+  <section data-view="entrenamiento" hidden aria-labelledby="t-train">
+    <h2 id="t-train">Entrenamiento LoRA</h2>
+    <p class="lede">Ollama no entrena. El panel lanza un fine-tuning LoRA con PyTorch sobre el modelo original de Hugging Face y registra el adaptador en Ollama encima del modelo equivalente que ya tienes (por ejemplo <code>Qwen/Qwen2.5-7B-Instruct</code> sobre <code>qwen2.5:7b</code>).</p>
+
+    <div class="block" aria-labelledby="t-env">
+      <h3 id="t-env">Entorno del servidor</h3>
+      <div id="train-env"><div class="skeleton w60"></div></div>
+    </div>
+
+    <div class="block" aria-labelledby="t-data">
+      <h3 id="t-data">Datasets</h3>
+      <p class="note">Archivo <code>.jsonl</code>, un ejemplo por línea: <code>{"messages":[{"role":"user","content":"…"},{"role":"assistant","content":"…"}]}</code>, o <code>{"instruction":"…","output":"…"}</code>, o <code>{"prompt":"…","response":"…"}</code>.</p>
+      <form id="dataset-form" class="actions">
+        <label>Subir dataset <input type="file" name="file" accept=".jsonl" required></label>
+        <button type="submit">Validar y guardar</button>
+      </form>
+      <div id="dataset-report"></div>
+      <div id="datasets"></div>
+    </div>
+
+    <form class="block" id="train-form" aria-labelledby="t-newjob">
+      <h3 id="t-newjob">Nuevo entrenamiento</h3>
+      <div class="form">
+        <label>Modelo base de Hugging Face
+          <input name="base_model" required placeholder="Qwen/Qwen2.5-7B-Instruct" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Dataset <select name="dataset" required></select></label>
+        <label>Aplicar sobre el modelo de Ollama <select name="ollama_from"></select></label>
+        <label>Nombre del modelo resultante
+          <input name="output_model" placeholder="qwen2.5-soporte:latest" autocomplete="off" spellcheck="false">
+        </label>
+        <label>Épocas <input name="epochs" type="number" value="3" min="0.1" max="100" step="any"></label>
+        <label>Learning rate <input name="learning_rate" type="number" value="0.0002" step="any" min="0" max="0.01"></label>
+        <label>Rango LoRA (r) <input name="lora_r" type="number" value="16" min="1"></label>
+        <label>Alpha LoRA <input name="lora_alpha" type="number" value="32" min="1"></label>
+        <label>Longitud máxima (tokens) <input name="max_seq_len" type="number" value="1024" min="64" max="32768" step="1"></label>
+        <label>Lote por GPU <input name="batch_size" type="number" value="1" min="1"></label>
+        <label>Acumulación de gradiente <input name="grad_accum" type="number" value="8" min="1"></label>
+        <label class="check"><input type="checkbox" name="load_4bit" checked> Cargar la base en 4 bits (QLoRA)</label>
+        <label class="check"><input type="checkbox" name="dry_run"> Solo validar el dataset, sin entrenar</label>
+      </div>
+      <p class="note">El modelo base se reparte entre las cuatro GPU. Descarga de memoria los modelos de Ollama antes de entrenar: compiten por la misma VRAM. Con 4 x 12 GB y QLoRA, modelos de hasta unos 14B entrenan con holgura.</p>
+      <div class="actions"><button class="primary" type="submit" id="train-submit">Empezar entrenamiento</button></div>
+    </form>
+
+    <div class="block" aria-labelledby="t-jobs">
+      <h3 id="t-jobs">Trabajos</h3>
+      <div id="jobs"><div class="skeleton w60"></div></div>
+    </div>
+  </section>
+
+  <!-- ===================================================== REGISTROS -->
+  <section data-view="registros" hidden aria-labelledby="t-logs">
+    <h2 id="t-logs">Registros de Ollama</h2>
+    <p class="lede">Salida de <code>journalctl -u ollama</code>: carga de modelos, reparto entre GPU y errores.</p>
+    <div class="block">
+      <div class="actions" style="margin-top:0">
+        <label>Líneas
+          <select id="log-lines"><option>100</option><option selected>300</option><option>1000</option></select>
+        </label>
+        <button type="button" id="log-refresh">Actualizar</button>
+        <label class="check"><input type="checkbox" id="log-follow"> Actualizar cada 5 s</label>
+      </div>
+      <p class="error-text" id="log-error" hidden></p>
+      <pre class="log" id="log-out" tabindex="0">Cargando…</pre>
+    </div>
+  </section>
+</main>
+
+<dialog id="confirm">
+  <form method="dialog">
+    <h3 id="confirm-title"></h3>
+    <p id="confirm-text"></p>
+    <div class="actions">
+      <button value="cancel" class="quiet">Cancelar</button>
+      <button value="ok" class="danger apart" id="confirm-ok"></button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

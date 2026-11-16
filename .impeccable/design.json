@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-16T12:00:00Z",
+  "title": "Design System: Panel Ollama",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Amarillo de etiqueta", "canonical": "#f2c200", "tonalRamp": ["#2e2400", "#574400", "#806500", "#ab8700", "#d6a900", "#f2c200", "#ffd633", "#fff1b8"] },
+      "accent-hover": { "role": "primary", "displayName": "Amarillo de etiqueta claro", "canonical": "#ffd633" },
+      "accent-ink": { "role": "primary", "displayName": "Tinta sobre amarillo", "canonical": "#10181b" },
+      "rail": { "role": "secondary", "displayName": "Petróleo profundo", "canonical": "#0e2f38", "tonalRamp": ["#061518", "#0e2f38", "#174552", "#24505b", "#3d6f7a", "#6b98a2", "#a3bcc1", "#e8f1f2"] },
+      "rail-ink": { "role": "secondary", "displayName": "Tinta de riel", "canonical": "#e8f1f2" },
+      "rail-ink-2": { "role": "secondary", "displayName": "Tinta de riel atenuada", "canonical": "#a3bcc1" },
+      "rail-line": { "role": "secondary", "displayName": "Filete de riel", "canonical": "#24505b" },
+      "bar": { "role": "secondary", "displayName": "Barra de memoria", "canonical": "#0e2f38" },
+      "bar-track": { "role": "neutral", "displayName": "Pista de barra", "canonical": "#dbe2e3" },
+      "focus": { "role": "secondary", "displayName": "Anillo de foco", "canonical": "#0e2f38" },
+      "ok": { "role": "tertiary", "displayName": "Verde de cabida", "canonical": "#17703d", "tonalRamp": ["#08301a", "#0f4a28", "#17703d", "#22914f", "#3fb26b", "#62d08c", "#a6e8bf", "#e3f7ea"] },
+      "warn": { "role": "tertiary", "displayName": "Ámbar de reparto", "canonical": "#855600", "tonalRamp": ["#2e1e00", "#573800", "#855600", "#a86e05", "#cf8f1c", "#f0b94a", "#f8d793", "#fdf1d9"] },
+      "bad": { "role": "tertiary", "displayName": "Rojo de no cabe", "canonical": "#b3261e", "tonalRamp": ["#3d0c09", "#6e1712", "#b3261e", "#d2443a", "#ec6a5f", "#ff8f85", "#ffc4be", "#fbeceb"] },
+      "bad-ground": { "role": "tertiary", "displayName": "Fondo de error", "canonical": "#fbeceb" },
+      "ground": { "role": "neutral", "displayName": "Gris frío de fondo", "canonical": "#f2f5f5", "tonalRamp": ["#0b1316", "#111c20", "#27383d", "#44555b", "#a2b3b8", "#c9d2d4", "#e7ecec", "#f2f5f5"] },
+      "surface": { "role": "neutral", "displayName": "Blanco de bloque", "canonical": "#ffffff" },
+      "sunken": { "role": "neutral", "displayName": "Gris hundido", "canonical": "#e7ecec" },
+      "ink": { "role": "neutral", "displayName": "Tinta", "canonical": "#10181b", "tonalRamp": ["#10181b", "#1f2c30", "#2f3f44", "#44555b", "#62747a", "#8a9a9f", "#b9c5c8", "#e9eff0"] },
+      "ink-2": { "role": "neutral", "displayName": "Tinta segunda", "canonical": "#44555b" },
+      "line": { "role": "neutral", "displayName": "Filete", "canonical": "#c9d2d4" },
+      "line-strong": { "role": "neutral", "displayName": "Filete fuerte", "canonical": "#10181b" },
+      "ground-dark": { "role": "neutral", "displayName": "Fondo (oscuro)", "canonical": "#0b1316" },
+      "surface-dark": { "role": "neutral", "displayName": "Bloque (oscuro)", "canonical": "#111c20" },
+      "sunken-dark": { "role": "neutral", "displayName": "Hundido (oscuro)", "canonical": "#0a1114" },
+      "ink-dark": { "role": "neutral", "displayName": "Tinta (oscuro)", "canonical": "#e9eff0" },
+      "ink-2-dark": { "role": "neutral", "displayName": "Tinta segunda (oscuro)", "canonical": "#a2b3b8" },
+      "line-dark": { "role": "neutral", "displayName": "Filete (oscuro)", "canonical": "#27383d" },
+      "line-strong-dark": { "role": "neutral", "displayName": "Filete fuerte (oscuro)", "canonical": "#e9eff0" },
+      "rail-dark": { "role": "secondary", "displayName": "Petróleo (oscuro)", "canonical": "#0f3540" },
+      "rail-ink-2-dark": { "role": "secondary", "displayName": "Tinta de riel atenuada (oscuro)", "canonical": "#a9c3c8" },
+      "rail-line-dark": { "role": "secondary", "displayName": "Filete de riel (oscuro)", "canonical": "#22525e" },
+      "focus-dark": { "role": "primary", "displayName": "Anillo de foco (oscuro)", "canonical": "#f2c200" },
+      "ok-dark": { "role": "tertiary", "displayName": "Verde de cabida (oscuro)", "canonical": "#62d08c" },
+      "warn-dark": { "role": "tertiary", "displayName": "Ámbar de reparto (oscuro)", "canonical": "#f0b94a" },
+      "bad-dark": { "role": "tertiary", "displayName": "Rojo de no cabe (oscuro)", "canonical": "#ff8f85" },
+      "bad-ground-dark": { "role": "tertiary", "displayName": "Fondo de error (oscuro)", "canonical": "#2a1513" },
+      "bar-dark": { "role": "secondary", "displayName": "Barra de memoria (oscuro)", "canonical": "#8fb9c2" },
+      "bar-track-dark": { "role": "neutral", "displayName": "Pista de barra (oscuro)", "canonical": "#1d2c31" }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Título de sección", "purpose": "Un h2 por sección, con text-wrap: balance." },
+      "title": { "displayName": "Título de bloque", "purpose": "h3 de cada bloque y subtítulos." },
+      "figure": { "displayName": "Cifra", "purpose": "Memoria usada de cada GPU; unidad aparte a 0.8125rem, 500, tinta segunda." },
+      "cell-strong": { "displayName": "Celda fuerte", "purpose": "Nombre de modelo, cifras de tabla, títulos de operación y h4." },
+      "body": { "displayName": "Texto", "purpose": "Texto corrido y campos; párrafos a 72ch como máximo." },
+      "label": { "displayName": "Etiqueta", "purpose": "label, dt, cabeceras de tabla, leyendas y sello de veredicto; caja normal." },
+      "control": { "displayName": "Control", "purpose": "Botones, enlaces del riel y opciones del selector segmentado." },
+      "mono": { "displayName": "Monoespaciada", "purpose": "pre, code, registros y Modelfiles." }
+    },
+    "shadows": [
+      { "name": "dialog", "value": "0 12px 32px rgb(0 0 0 / 0.28)", "purpose": "Única sombra del sistema: el diálogo de confirmación." },
+      { "name": "dialog-backdrop", "value": "rgb(8 16 19 / 0.55)", "purpose": "Telón detrás del diálogo." },
+      { "name": "gpu-option-selected", "value": "inset 0 0 0 1px var(--line-strong)", "purpose": "Segundo filete interior de la casilla de GPU marcada; es un filete, no una elevación." }
+    ],
+    "motion": [
+      { "name": "control-state", "value": "150ms (background-color, color, border-color)", "purpose": "Cambios de estado de botones." },
+      { "name": "meter-fill", "value": "width 250ms cubic-bezier(.16,1,.3,1)", "purpose": "Relleno de las barras de memoria y progreso." },
+      { "name": "meter-busy", "value": "slide 1.4s ease-in-out infinite", "purpose": "Progreso indeterminado; con prefers-reduced-motion queda fijo al 50 % de opacidad." },
+      { "name": "press", "value": "translateY(1px)", "purpose": "Botón pulsado." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "820px", "purpose": "Por debajo: una columna, riel plegable, controles de 44 px, tablas apiladas." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Botón primario",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Acción principal de un formulario; uno por formulario.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Descargar modelo</button>",
+      "css": ".ds-btn { font: 500 0.9375rem/1 \"Barlow Semi Condensed\", \"Barlow\", system-ui, sans-serif; padding: 8px 12px; min-height: 34px; border-radius: 3px; border: 1px solid #10181b; background: #ffffff; color: #10181b; cursor: pointer; transition: background-color 150ms, color 150ms, border-color 150ms; } .ds-btn:hover { background: #e7ecec; } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid #0e2f38; outline-offset: 2px; } .ds-btn-primary { background: #f2c200; color: #10181b; border-color: #10181b; } .ds-btn-primary:hover { background: #ffd633; }"
+    },
+    {
+      "name": "Botón base, discreto y destructivo",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Acciones de fila y secundarias; el destructivo en rojo y separado.",
+      "html": "<div style=\"display:flex;gap:8px\"><button class=\"ds-b\">Cargar</button><button class=\"ds-b ds-b-quiet\">Ficha</button><button class=\"ds-b ds-b-danger\" style=\"margin-left:18px\">Borrar</button></div>",
+      "css": ".ds-b { font: 500 0.9375rem/1 \"Barlow Semi Condensed\", \"Barlow\", system-ui, sans-serif; padding: 6px 10px; min-height: 30px; border-radius: 3px; border: 1px solid #10181b; background: #ffffff; color: #10181b; cursor: pointer; transition: background-color 150ms; } .ds-b:hover { background: #e7ecec; } .ds-b:focus-visible { outline: 2px solid #0e2f38; outline-offset: 2px; } .ds-b-quiet { border-color: #c9d2d4; } .ds-b-danger { color: #b3261e; border-color: #b3261e; } .ds-b-danger:hover { background: #fbeceb; }"
+    },
+    {
+      "name": "Campo con etiqueta",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Etiqueta semicondensada encima, campo de filete y 3 px.",
+      "html": "<label class=\"ds-field\">Nombre del modelo<input class=\"ds-input\" placeholder=\"llama3.2:3b\"></label>",
+      "css": ".ds-field { display: grid; gap: 4px; font: 500 0.875rem/1.35 \"Barlow Semi Condensed\", \"Barlow\", system-ui, sans-serif; color: #44555b; max-width: 320px; } .ds-input { font: 400 0.9375rem/1.3 \"Barlow\", system-ui, sans-serif; color: #10181b; background: #ffffff; border: 1px solid #c9d2d4; border-radius: 3px; padding: 7px 9px; min-height: 34px; } .ds-input::placeholder { color: #44555b; opacity: 1; } .ds-input:hover { border-color: #44555b; } .ds-input:focus-visible { outline: 2px solid #0e2f38; outline-offset: 2px; }"
+    },
+    {
+      "name": "Riel de navegación",
+      "kind": "nav",
+      "refersTo": "rail",
+      "description": "Riel petróleo de 216 px; sección actual en amarillo.",
+      "html": "<nav class=\"ds-rail\"><p class=\"ds-brand\">Panel Ollama</p><a href=\"#\" aria-current=\"page\">Modelos <span>12</span></a><a href=\"#\">Motores <span>2</span></a><a href=\"#\">Descargar</a><a href=\"#\">Cuantizar</a></nav>",
+      "css": ".ds-rail { background: #0e2f38; color: #e8f1f2; width: 216px; padding: 18px 8px; display: flex; flex-direction: column; gap: 1px; } .ds-brand { font: 600 1.25rem/1.1 \"Barlow Semi Condensed\", \"Barlow\", sans-serif; margin: 0 8px 10px; } .ds-rail a { display: flex; justify-content: space-between; padding: 8px 10px; border-radius: 3px; text-decoration: none; color: #a3bcc1; font: 500 1rem/1.2 \"Barlow Semi Condensed\", \"Barlow\", sans-serif; } .ds-rail a span { font-size: 0.8125rem; } .ds-rail a:hover { color: #e8f1f2; background: #24505b; } .ds-rail a:focus-visible { outline: 2px solid #f2c200; outline-offset: 2px; } .ds-rail a[aria-current=\"page\"] { background: #f2c200; color: #10181b; }"
+    },
+    {
+      "name": "Bloque con memoria de GPU",
+      "kind": "card",
+      "refersTo": "block",
+      "description": "Bloque plano con cabecera de 2 px de tinta; celda de GPU con cifra, unidad pequeña y medidor.",
+      "html": "<section class=\"ds-block\"><h3>Memoria de vídeo</h3><div class=\"ds-gpus\"><div class=\"ds-gpu\"><div class=\"ds-name\"><span>GPU 0</span><span>54 °C</span></div><div class=\"ds-figure\">7.9<small>/ 11.6 GiB</small></div><div class=\"ds-meter\"><i style=\"width:68%\"></i></div><div class=\"ds-owner\">qwen2.5:14b</div></div><div class=\"ds-gpu\"><div class=\"ds-name\"><span>GPU 1</span><span>41 °C</span></div><div class=\"ds-figure\">0.3<small>/ 11.6 GiB</small></div><div class=\"ds-meter\"><i style=\"width:3%\"></i></div><div class=\"ds-owner ds-idle\">Libre</div></div></div></section>",
+      "css": ".ds-block { background: #ffffff; border: 1px solid #c9d2d4; border-top: 2px solid #10181b; border-radius: 3px; padding: 14px 16px; color: #10181b; font: 400 0.9375rem/1.45 \"Barlow\", sans-serif; font-variant-numeric: tabular-nums; } .ds-block h3 { font: 600 1.125rem/1.3 \"Barlow Semi Condensed\", \"Barlow\", sans-serif; margin: 0 0 8px; } .ds-gpus { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); } .ds-gpu { padding: 4px 16px 4px 0; } .ds-gpu + .ds-gpu { border-left: 1px solid #c9d2d4; padding-left: 16px; } .ds-name { display: flex; justify-content: space-between; font: 500 0.875rem/1.3 \"Barlow Semi Condensed\", sans-serif; color: #44555b; } .ds-figure { font: 600 2.25rem/1 \"Barlow Semi Condensed\", sans-serif; letter-spacing: -0.01em; } .ds-figure small { font: 500 0.8125rem/1 \"Barlow Semi Condensed\", sans-serif; color: #44555b; margin-left: 3px; } .ds-meter { height: 10px; background: #dbe2e3; border-radius: 1px; margin: 8px 0 6px; overflow: hidden; } .ds-meter i { display: block; height: 100%; background: #0e2f38; transition: width 250ms cubic-bezier(.16,1,.3,1); } .ds-owner { font: 600 0.9375rem/1.3 \"Barlow Semi Condensed\", sans-serif; } .ds-idle { color: #44555b; font-weight: 500; }"
+    },
+    {
+      "name": "Sello de veredicto",
+      "kind": "chip",
+      "refersTo": "fit-seal",
+      "description": "Recuadro del color del estado con una celda por GPU; rellenas las que el modelo necesita.",
+      "html": "<div style=\"display:flex;gap:10px;flex-wrap:wrap\"><span class=\"ds-fit ds-ok\"><span class=\"ds-cells\"><i class=\"on\"></i><i></i><i></i><i></i></span>Cabe en 1 GPU</span><span class=\"ds-fit ds-warn\"><span class=\"ds-cells\"><i class=\"on\"></i><i class=\"on\"></i><i class=\"on\"></i><i></i></span>Repartido en 3 GPU</span><span class=\"ds-fit ds-bad\"><span class=\"ds-cells\"><i class=\"on\"></i><i class=\"on\"></i><i class=\"on\"></i><i class=\"on\"></i></span>No cabe, usará RAM</span></div>",
+      "css": ".ds-fit { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; border: 1px solid currentColor; border-radius: 2px; padding: 3px 7px; font: 600 0.875rem/1.1 \"Barlow Semi Condensed\", \"Barlow\", sans-serif; } .ds-cells { display: inline-flex; gap: 2px; } .ds-cells i { width: 8px; height: 13px; border: 1px solid currentColor; border-radius: 1px; } .ds-cells i.on { background: currentColor; } .ds-ok { color: #17703d; } .ds-warn { color: #855600; } .ds-bad { color: #b3261e; }"
+    },
+    {
+      "name": "Selector segmentado",
+      "kind": "custom",
+      "refersTo": "segmented-option",
+      "description": "Radios reales con aspecto de bloque; la opción marcada en amarillo.",
+      "html": "<fieldset class=\"ds-seg\"><legend>Mantener cargado</legend><label><input type=\"radio\" name=\"k\" checked><span>5 min</span></label><label><input type=\"radio\" name=\"k\"><span>1 hora</span></label><label><input type=\"radio\" name=\"k\"><span>Siempre</span></label></fieldset>",
+      "css": ".ds-seg { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; } .ds-seg legend { font: 500 0.875rem/1.2 \"Barlow Semi Condensed\", sans-serif; color: #44555b; padding: 0; margin-bottom: 4px; } .ds-seg label { display: block; color: #10181b; } .ds-seg input { position: absolute; opacity: 0; width: 1px; height: 1px; } .ds-seg span { display: block; padding: 7px 12px; border: 1px solid #c9d2d4; margin-left: -1px; cursor: pointer; font: 500 0.9375rem/1.2 \"Barlow Semi Condensed\", sans-serif; background: #ffffff; } .ds-seg label:first-of-type span { border-radius: 3px 0 0 3px; margin-left: 0; } .ds-seg label:last-of-type span { border-radius: 0 3px 3px 0; } .ds-seg span:hover { background: #e7ecec; } .ds-seg input:checked + span { background: #f2c200; color: #10181b; border-color: #10181b; position: relative; } .ds-seg input:focus-visible + span { outline: 2px solid #0e2f38; outline-offset: 2px; position: relative; }"
+    },
+    {
+      "name": "Selector de GPU",
+      "kind": "custom",
+      "refersTo": "gpu-option",
+      "description": "Casillas tarjeta; la marcada con doble filete de tinta, sin amarillo.",
+      "html": "<fieldset class=\"ds-pick\"><legend>GPU</legend><label><input type=\"checkbox\" checked><span>GPU 0<span class=\"ds-free\">11.2 GiB libres</span></span></label><label><input type=\"checkbox\"><span>GPU 1<span class=\"ds-free\">3.1 GiB libres</span></span></label></fieldset>",
+      "css": ".ds-pick { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; font: 400 0.9375rem/1.3 \"Barlow\", sans-serif; } .ds-pick legend { font: 500 0.875rem/1.2 \"Barlow Semi Condensed\", sans-serif; color: #44555b; padding: 0; margin-bottom: 6px; } .ds-pick label { display: flex; gap: 10px; align-items: flex-start; border: 1px solid #c9d2d4; border-radius: 3px; padding: 9px 10px; color: #10181b; background: #ffffff; cursor: pointer; } .ds-pick label:has(input:checked) { border-color: #10181b; box-shadow: inset 0 0 0 1px #10181b; } .ds-pick input { margin-top: 2px; width: 16px; height: 16px; accent-color: #0e2f38; } .ds-free { display: block; color: #44555b; font-size: 0.8125rem; }"
+    },
+    {
+      "name": "Bandeja de operaciones",
+      "kind": "custom",
+      "refersTo": "meter",
+      "description": "Filas de operación con título, estado, barra de progreso y botón Cancelar.",
+      "html": "<section class=\"ds-ops\"><div class=\"ds-op\"><div class=\"ds-title\">Descargando llama3.1:70b</div><div class=\"ds-status\">18.2 de 39.6 GB</div><div class=\"ds-m\"><i style=\"width:46%\"></i></div><button class=\"ds-c\">Cancelar</button></div><div class=\"ds-op ds-done\"><div class=\"ds-title\">Cuantizando a q4_K_M</div><div class=\"ds-status\">Terminado</div><div class=\"ds-m\"><i style=\"width:100%\"></i></div><button class=\"ds-c\">Cerrar</button></div></section>",
+      "css": ".ds-ops { background: #ffffff; border: 1px solid #c9d2d4; border-top: 2px solid #10181b; border-radius: 3px; padding: 14px 16px; color: #10181b; font: 400 0.9375rem/1.45 \"Barlow\", sans-serif; } .ds-op { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid #c9d2d4; } .ds-op:last-child { border-bottom: 0; } .ds-title { font: 600 1rem/1.2 \"Barlow Semi Condensed\", sans-serif; } .ds-status { color: #44555b; font-size: 0.875rem; grid-column: 1; } .ds-done .ds-status { color: #17703d; } .ds-m { grid-column: 1; height: 10px; background: #dbe2e3; border-radius: 1px; overflow: hidden; } .ds-m i { display: block; height: 100%; background: #0e2f38; } .ds-c { grid-row: 1 / span 3; grid-column: 2; font: 500 0.9375rem/1 \"Barlow Semi Condensed\", sans-serif; padding: 8px 12px; min-height: 34px; border-radius: 3px; border: 1px solid #10181b; background: #ffffff; cursor: pointer; } .ds-c:hover { background: #e7ecec; } .ds-c:focus-visible { outline: 2px solid #0e2f38; outline-offset: 2px; }"
+    },
+    {
+      "name": "Diálogo de confirmación",
+      "kind": "custom",
+      "refersTo": "dialog",
+      "description": "Modal de borrado: foco inicial en Cancelar, acción destructiva al extremo derecho.",
+      "html": "<div class=\"ds-dialog\" role=\"dialog\"><h3>Borrar qwen2.5:14b</h3><p>Se borra el modelo del servidor. No se puede deshacer.</p><div class=\"ds-acts\"><button class=\"ds-q\">Cancelar</button><button class=\"ds-d\">Borrar</button></div></div>",
+      "css": ".ds-dialog { border: 1px solid #10181b; border-radius: 3px; background: #ffffff; color: #10181b; padding: 20px; width: min(440px, calc(100% - 32px)); box-shadow: 0 12px 32px rgb(0 0 0 / 0.28); font: 400 0.9375rem/1.45 \"Barlow\", sans-serif; } .ds-dialog h3 { font: 600 1.125rem/1.3 \"Barlow Semi Condensed\", sans-serif; margin: 0 0 8px; } .ds-acts { display: flex; gap: 8px; margin-top: 14px; } .ds-q, .ds-d { font: 500 0.9375rem/1 \"Barlow Semi Condensed\", sans-serif; padding: 8px 12px; min-height: 34px; border-radius: 3px; background: #ffffff; cursor: pointer; } .ds-q { border: 1px solid #c9d2d4; color: #10181b; } .ds-q:hover { background: #e7ecec; } .ds-d { margin-left: auto; border: 1px solid #b3261e; color: #b3261e; } .ds-d:hover { background: #fbeceb; } .ds-q:focus-visible, .ds-d:focus-visible { outline: 2px solid #0e2f38; outline-offset: 2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "La caja de la tarjeta gráfica",
+    "overview": "El panel se lee como la tabla de especificaciones impresa en la caja de una GPU: pares clave y valor separados por filetes de 1 px, cifras grandes en semicondensada con la unidad en pequeño, un riel petróleo a toda altura y un único amarillo de etiqueta. La información más valiosa (qué ocupa cada tarjeta y si un modelo cabe en 4 x 12 GB) se presenta como dato técnico, no como gráfico decorativo.\n\nLa densidad es de herramienta de trabajo: bloques blancos planos sobre un fondo gris frío, cada uno coronado por un filete de tinta de 2 px, tablas que no esconden columnas y estados que se nombran con palabras. El sistema funciona en claro y en oscuro; el tema sigue al sistema operativo y se puede fijar a mano.\n\nSe rechaza el panel de tarjetas de métricas con gráfico decorativo. Cuando no hay dato, el panel lo dice con una frase que explica por qué y qué hacer; nunca rellena con cifras de ejemplo.",
+    "keyCharacteristics": [
+      "Riel de navegación petróleo de 216 px a toda altura.",
+      "Superficies planas con filete superior de tinta; radio de 3 px en todo.",
+      "Amarillo de etiqueta reservado a la acción primaria y a la selección.",
+      "Cifras tabulares en Barlow Semi Condensed con la unidad pequeña y atenuada.",
+      "Veredicto de cabida como sello con una celda por GPU."
+    ],
+    "rules": [
+      { "name": "La regla del amarillo único", "body": "El amarillo solo marca la acción primaria y la selección actual. Nunca decora, nunca es un estado ni un dato. Un formulario lleva como mucho un botón amarillo.", "section": "colors" },
+      { "name": "La regla del estado con palabras", "body": "Verde, ámbar y rojo siempre van con texto que nombra el estado (\"Cabe en 1 GPU\", \"Repartido en 3 GPU\", \"No cabe, usará RAM\"); el color refuerza, no informa solo.", "section": "colors" },
+      { "name": "La regla de la unidad pequeña", "body": "Toda cifra con unidad se escribe como número grande y unidad aparte, en semicondensada 500 a 0.75em y tinta segunda (\"4.7 GB\", \"8 K\", \"7.6 B\"). El número es el dato; la unidad lo acompaña.", "section": "typography" },
+      { "name": "La regla del filete", "body": "La profundidad se dice con líneas: 1 px de filete entre filas y campos, 2 px de tinta en la cabecera de cada bloque, 1 px de tinta bajo la cabecera de tabla. La sombra está reservada al modal.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do reservar el amarillo de etiqueta a la acción primaria, la sección actual y la opción marcada.",
+      "Do escribir cada cifra con la unidad aparte, pequeña y en tinta segunda, y alinear las columnas numéricas a la derecha con cifras tabulares.",
+      "Do mostrar solo datos reales del servidor; si faltan, un párrafo empty que dice por qué y qué hacer (\"Ningún modelo de Ollama en memoria. Pulsa Cargar...\").",
+      "Do usar esqueletos grises de 14 px mientras llega el dato, nunca cifras provisionales.",
+      "Do separar con filetes de 1 px y coronar cada bloque con 2 px de tinta.",
+      "Do nombrar cada estado con palabras además del color.",
+      "Do pedir confirmación en un diálogo con el foco en \"Cancelar\" antes de cualquier borrado.",
+      "Do subir todos los controles a 44 px por debajo de 820 px."
+    ],
+    "donts": [
+      "Don't usar el amarillo para estados, datos, decoración o fondos de bloque.",
+      "Don't inventar cifras, modelos de ejemplo ni gráficos de relleno cuando no hay datos.",
+      "Don't construir tarjetas de métricas con gráfico decorativo; la memoria y la cabida se dan como ficha técnica.",
+      "Don't poner sombras en bloques, botones o tablas; la sombra es solo del modal.",
+      "Don't redondear por encima de 3 px.",
+      "Don't escribir la unidad al mismo tamaño y peso que la cifra."
+    ]
+  }
+}
