@@ -161,6 +161,43 @@ def ollama_service_env():
     return value
 
 
+ENV_HELPER = "/usr/local/sbin/ollama-panel-env"
+OLLAMA_SETTABLE = {"OLLAMA_SCHED_SPREAD", "OLLAMA_NUM_PARALLEL", "OLLAMA_MAX_LOADED_MODELS", "OLLAMA_KEEP_ALIVE"}
+
+
+def ollama_config():
+    """Lo que el panel puede cambiar del servicio de Ollama y su valor efectivo."""
+    available = SAME_HOST and os.path.isfile(ENV_HELPER) and bool(shutil.which("sudo"))
+    out = {"available": available, "effective": ollama_service_env() or {}, "panel": {}}
+    if not available:
+        out["reason"] = ("El panel no corre en la máquina de Ollama." if not SAME_HOST else
+                         "Falta el ayudante de configuración. En el servidor: cd ~/ia-server-web && git pull && sudo ./install.sh")
+        return out
+    try:
+        r = subprocess.run(["sudo", "-n", ENV_HELPER, "get"], capture_output=True, text=True, timeout=15)
+        if r.returncode != 0:
+            out.update(available=False, reason="sudo no permite al panel usar el ayudante: " + (r.stderr.strip()[:200] or "sin detalle"))
+        else:
+            out["panel"] = dict(l.split("=", 1) for l in r.stdout.splitlines() if "=" in l)
+    except (OSError, subprocess.SubprocessError) as e:
+        out.update(available=False, reason=str(e))
+    return out
+
+
+def set_ollama_config(key, value):
+    if key not in OLLAMA_SETTABLE:
+        raise ValueError("Variable no permitida.")
+    cfg = ollama_config()
+    if not cfg["available"]:
+        raise ValueError(cfg["reason"])
+    args = ["sudo", "-n", ENV_HELPER] + (["unset", key] if value is None else ["set", key, str(value)])
+    r = subprocess.run(args, capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        raise ValueError((r.stderr or r.stdout).strip()[:300] or "No se pudo cambiar la configuración de Ollama.")
+    _ollama_env_cache["at"] = 0  # releer el entorno efectivo
+    return ollama_config()
+
+
 def runner_blob(pid):
     """Digest del GGUF que carga un proceso 'ollama runner', leído de su línea de comandos."""
     try:
@@ -1359,6 +1396,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, updater.apply(force=bool(self.read_json().get("force"))))
         if rest == "settings" and m == "POST":
             return self.send_json(200, save_settings(self.read_json()))
+        if rest == "ollama-config":
+            if m == "GET":
+                return self.send_json(200, ollama_config())
+            if m == "POST":
+                body = self.read_json()
+                return self.send_json(200, set_ollama_config(str(body.get("key", "")), body.get("value")))
         if rest == "engines/env" and m == "GET":
             return self.send_json(200, engine_env())
         if rest == "engines":

@@ -481,6 +481,54 @@ function renderGpus() {
   $("#host").replaceChildren(...kv.map(([k, v]) => h("div", {}, h("dt", {}, k), h("dd", {}, v))));
 }
 
+/* ---- reparto entre GPU de Ollama (OLLAMA_SCHED_SPREAD) */
+
+let ollamaCfg = null;
+
+async function loadOllamaCfg() {
+  try { ollamaCfg = await api("/panel/ollama-config"); } catch (e) { ollamaCfg = { available: false, reason: e.message, effective: {} }; }
+  renderSched();
+}
+
+function renderSched() {
+  const box = $("#ollama-sched");
+  if (!ollamaCfg || !(state.sys && state.sys.gpus && state.sys.gpus.length > 1)) { box.replaceChildren(); return; }
+  const spread = /^(1|true)$/i.test((ollamaCfg.effective || {}).OLLAMA_SCHED_SPREAD || "");
+  const seg = h("fieldset", { class: "seg" }, h("legend", {}, "Reparto de los modelos de Ollama entre GPU"),
+    [["0", "Automático: una GPU si cabe"], ["1", "Siempre en todas"]].map(([v, label]) =>
+      h("label", {}, h("input", { type: "radio", name: "sched", value: v, checked: (v === "1") === spread, disabled: !ollamaCfg.available,
+        onchange: () => changeSched(v) }), h("span", {}, label))));
+  fill(box, seg, h("p", { class: "note" }, !ollamaCfg.available ? ollamaCfg.reason
+    : spread ? "Ahora cada modelo se reparte entre todas las GPU aunque quepa en una: más lento para modelos pequeños, y deja menos sitio para tener varios cargados."
+    : "Si el modelo cabe en una GPU, Ollama lo carga en la que tenga más memoria libre; si no cabe, lo reparte. Cambiarlo reinicia Ollama y descarga los modelos de memoria."));
+}
+
+async function changeSched(value) {
+  const loaded = (state.ps || []).map((m) => m.name);
+  const ok = await confirmAction(value === "1" ? "Repartir siempre en todas las GPU" : "Reparto automático",
+    "Se reinicia Ollama para aplicarlo" + (loaded.length ? " y se descargan de memoria: " + loaded.join(", ") : "") + ".", "Aplicar y reiniciar Ollama");
+  if (!ok) { renderSched(); return; }
+  await runOp("Cambiar el reparto entre GPU de Ollama", async (update) => {
+    update({ status: "Reiniciando Ollama…" });
+    ollamaCfg = await api("/panel/ollama-config", { body: { key: "OLLAMA_SCHED_SPREAD", value: value } });
+    for (let i = 0; i < 20; i++) { // esperar a que Ollama vuelva a responder
+      try { await api("/ollama/version"); break; } catch (e) { await new Promise((r) => setTimeout(r, 1000)); }
+    }
+    return { message: value === "1" ? "Ollama reparte ahora cada modelo entre todas las GPU." : "Ollama usa ahora una sola GPU si el modelo cabe." };
+  }, { cancellable: false });
+  renderSched();
+}
+
+/** Memoria de un modelo por GPU, según nvidia-smi (los contextos CUDA vacíos, menos de 0,4 GiB, no cuentan). */
+function modelGpuUsage(name) {
+  const out = [];
+  for (const g of (state.sys && state.sys.gpus) || []) {
+    const mem = g.procs.filter((p) => p.blob && state.blobs.get(p.blob) === name).reduce((s, p) => s + p.mem, 0);
+    if (mem >= 0.4 * GIB) out.push("GPU " + g.index + " " + fmtGiB(mem) + " GiB");
+  }
+  return out;
+}
+
 function renderLoaded() {
   const box = $("#loaded");
   $("#unload-all").hidden = !(state.ps && state.ps.length > 1);
@@ -494,7 +542,8 @@ function renderLoaded() {
       h("th", { class: "num" }, "Contexto"), h("th", {}, "Se descarga"), h("th", {}, h("span", { class: "visually-hidden" }, "Acciones")))),
     h("tbody", {}, state.ps.map((m) => {
       const gpuPart = m.size ? Math.round((m.size_vram / m.size) * 100) : 0;
-      const where = gpusForModel(m.name);
+      const usage = modelGpuUsage(m.name);
+      const where = usage.length ? usage : gpusForModel(m.name);
       const forever = new Date(m.expires_at).getFullYear() > 2200;
       return h("tr", {},
         h("td", { class: "model", "data-label": "Modelo" }, m.name),
@@ -653,6 +702,7 @@ function ficha(m) {
 
 function renderModelsView() {
   renderGpus();
+  renderSched();
   renderLoaded();
   renderInstalled();
 }
@@ -764,11 +814,13 @@ function renderGpuPicker() {
   const prev = new Set($$("input:checked", box).map((i) => i.value));
   const gpus = (state.sys && state.sys.gpus) || [];
   const firstTime = !box.dataset.ready;
-  fill(box, h("legend", {}, engineKind() === "vllm" ? "GPU (1, 2 o 4: el modelo se divide entre ellas)" : "GPU (ninguna marcada = todas)"),
+  const vllm = engineKind() === "vllm";
+  fill(box, h("legend", {}, vllm ? "GPU (1, 2 o 4: el modelo se divide entre ellas)" : "GPU (sin marcar = automático: una si cabe, si no las mínimas necesarias)"),
     gpus.length ? gpus.map((g) => {
       const free = g.mem_total - g.mem_used;
       const own = gpuOwners(g).names;
-      return h("label", {}, h("input", { type: "checkbox", value: g.index, checked: prev.has(String(g.index)) || (firstTime && own.length === 0 && free > 4 * GIB),
+      // llama.cpp arranca en automático (nada marcado); vLLM necesita una selección explícita.
+      return h("label", {}, h("input", { type: "checkbox", value: g.index, checked: prev.has(String(g.index)) || (vllm && firstTime && own.length === 0 && free > 4 * GIB),
         onchange: updateEngineFit }),
         h("span", {}, "GPU " + g.index, h("span", { class: "free" }, fmtGiB(free) + " GiB libres" + (own.length ? " · " + own.join(", ") : ""))));
     }) : h("p", { class: "note" }, "Sin datos de GPU."));
@@ -776,6 +828,32 @@ function renderGpuPicker() {
 }
 
 function selectedGpus() { return $$("#engine-gpus input:checked").map((i) => Number(i.value)); }
+
+/**
+ * Reparto automático para llama.cpp: la GPU con más memoria libre si el modelo cabe en ella; si no, las
+ * mínimas necesarias, de más a menos libre. Cada GPU usada reserva ~0,6 GiB fijos. null si no cabe ni en todas.
+ */
+function autoGpus(need) {
+  const gpus = ((state.sys && state.sys.gpus) || []).map((g) => ({ index: Number(g.index), free: Math.max(0, g.mem_total - g.mem_used) }))
+    .sort((a, b) => b.free - a.free);
+  let sum = 0;
+  const chosen = [];
+  for (const g of gpus) {
+    chosen.push(g.index);
+    sum += g.free - 0.6 * GIB;
+    if (sum >= need) return chosen;
+  }
+  return null;
+}
+
+/** Memoria que necesita en llama.cpp el modelo elegido en el formulario de Motores (o null). */
+function engineNeed() {
+  const f = $("#engine-form");
+  const m = (state.tags || []).find((t) => t.name === f.ollama_model.value);
+  if (!m) return null;
+  const kvType = (/--cache-type-k\s+(q8_0|q4_0)/.exec(f.extra.value) || [])[1] || "f16";
+  return { m, kvType, est: estimateVram(m, Number(f.ctx.value) || 0, Number(f.parallel.value) || 1, kvType) };
+}
 
 function updateEngineFit() {
   const out = $("#engine-fit");
@@ -786,18 +864,22 @@ function updateEngineFit() {
   const free = chosen.reduce((s, g) => s + Math.max(0, g.mem_total - g.mem_used), 0);
   const parts = [];
   if (kind === "llama.cpp") {
-    const m = (state.tags || []).find((t) => t.name === $("#engine-form [name=ollama_model]").value);
-    const ctx = Number($("#engine-form [name=ctx]").value) || 0;
-    const par = Number($("#engine-form [name=parallel]").value) || 1;
-    if (m) {
+    const n = engineNeed();
+    if (n) {
       // Mismo estimador que Modelos; aquí el paralelo y el tipo de caché son los de esta instancia.
-      const extra = $("#engine-form [name=extra]").value;
-      const kvType = (/--cache-type-k\s+(q8_0|q4_0)/.exec(extra) || [])[1] || "f16";
-      const est = estimateVram(m, ctx, par, kvType);
-      const need = est.total + 0.6 * GIB * Math.max(1, chosen.length);
-      parts.push("Necesita unos " + fmtGiB(need) + " GiB (" + fmtGB(m.size) + " de pesos" + (est.kv != null ? " + " + fmtGiB(est.kv) + " GiB de caché KV " + kvType + " para " + par + " × " + ctx.toLocaleString("es") + " tokens" : "") + ").");
-      if (need > free) parts.push("En las GPU elegidas hay " + fmtGiB(free) + " GiB libres: no cabe entero y llama.cpp dejará capas en CPU.");
-      else parts.push("Libre en las GPU elegidas: " + fmtGiB(free) + " GiB.");
+      const ctx = Number($("#engine-form [name=ctx]").value) || 0;
+      const par = Number($("#engine-form [name=parallel]").value) || 1;
+      parts.push("Necesita unos " + fmtGiB(n.est.total) + " GiB (" + fmtGB(n.m.size) + " de pesos" + (n.est.kv != null ? " + " + fmtGiB(n.est.kv) + " GiB de caché KV " + n.kvType + " para " + par + " × " + ctx.toLocaleString("es") + " tokens" : "") + ").");
+      if (!sel.length) {
+        const auto = autoGpus(n.est.total);
+        parts.push(!auto ? "No cabe ni en todas las GPU juntas: llama.cpp dejará capas en CPU (lento)."
+          : auto.length === 1 ? "Automático: irá entero en la GPU " + auto[0] + ", la que tiene más memoria libre."
+          : "Automático: no cabe en una sola, se repartirá en " + auto.length + " GPU (" + auto.join(", ") + ").");
+      } else {
+        const need = n.est.total + 0.6 * GIB * Math.max(1, chosen.length);
+        parts.push(need > free ? "En las GPU elegidas hay " + fmtGiB(free) + " GiB libres: no cabe entero y llama.cpp dejará capas en CPU."
+          : "Libre en las GPU elegidas: " + fmtGiB(free) + " GiB.");
+      }
     }
   } else {
     if (![1, 2, 4, 8].includes(sel.length)) parts.push("Marca 1, 2 o 4 GPU.");
@@ -823,6 +905,11 @@ $("#engine-form").addEventListener("submit", async (e) => {
     gpu_memory_utilization: Number(f.mem_util.value), extra: f.extra.value.trim(),
   };
   if (!body.model) { notify(kind === "vllm" ? "Escribe el id del modelo de Hugging Face." : "Elige un modelo.", "error"); return; }
+  if (kind === "llama.cpp" && !body.gpus.length) {
+    // Automático: una GPU si cabe, si no las mínimas; si no cabe ni en todas, todas (y llama.cpp usa la CPU para el resto).
+    const n = engineNeed();
+    body.gpus = (n && autoGpus(n.est.total)) || [];
+  }
   const btn = $("#engine-submit");
   btn.disabled = true;
   try {
@@ -2129,7 +2216,7 @@ function route() {
   }
   $("#rail").classList.remove("open");
   $("#nav-toggle").setAttribute("aria-expanded", "false");
-  if (view === "modelos") renderModelsView();
+  if (view === "modelos") { renderModelsView(); loadOllamaCfg(); }
   if (view === "motores") enterEngines();
   if (view === "acceso") refreshStatus().then(renderAccess);
   if (view === "actualizar") { loadUpdate(); pollTerm(); }

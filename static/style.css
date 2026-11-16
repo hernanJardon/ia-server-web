@@ -223,6 +223,9 @@ summary:hover { color: var(--ink); }
 .fit .cells i { width: 8px; height: 13px; border: 1px solid currentColor; border-radius: 1px; }
 .fit .cells i.on { background: currentColor; }
 
+.sched { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: flex-end; }
+.sched .note { margin: 0; flex: 1 1 320px; }
+
 /* ---------- ocupante de cada GPU, celda de modelo y selector de GPU */
 .gpu .owner { font: 600 0.9375rem/1.3 var(--label); color: var(--ink); margin-top: 2px; overflow-wrap: anywhere; }
 .gpu .owner.idle { color: var(--ink-2); font-weight: 500; }

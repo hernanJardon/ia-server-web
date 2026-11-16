@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Ajusta variables del servicio de Ollama para el Panel IA Server. Se instala como root en
+# /usr/local/sbin/ollama-panel-env y el usuario del panel lo puede ejecutar con sudo sin contraseña.
+# Solo admite las variables y valores de la lista blanca; cualquier otra cosa se rechaza.
+#
+#   ollama-panel-env get                 muestra lo que fijó el panel
+#   ollama-panel-env set CLAVE VALOR     fija una variable y reinicia Ollama
+#   ollama-panel-env unset CLAVE         quita una variable fijada por el panel y reinicia Ollama
+set -euo pipefail
+export LC_ALL=C
+
+DROPIN_DIR=/etc/systemd/system/ollama.service.d
+# "zz-" para aplicarse después de override.conf (systemctl edit): lo que fija el panel manda.
+DROPIN="$DROPIN_DIR/zz-panel.conf"
+
+die() { echo "Error: $*" >&2; exit 2; }
+
+valid() {
+  local key="$1" val="$2"
+  case "$key" in
+    OLLAMA_SCHED_SPREAD)      [[ "$val" =~ ^(0|1)$ ]] ;;
+    OLLAMA_NUM_PARALLEL)      [[ "$val" =~ ^([1-9]|1[0-6])$ ]] ;;
+    OLLAMA_MAX_LOADED_MODELS) [[ "$val" =~ ^([1-9]|1[0-6])$ ]] ;;
+    OLLAMA_KEEP_ALIVE)        [[ "$val" =~ ^(-1|0|[0-9]{1,4}[smh])$ ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+read_current() {
+  [ -f "$DROPIN" ] || return 0
+  sed -n 's/^Environment="\([A-Z_]*\)=\([^"]*\)"$/\1=\2/p' "$DROPIN"
+}
+
+write_dropin() {
+  mkdir -p "$DROPIN_DIR"
+  local tmp; tmp="$(mktemp "$DROPIN_DIR/.zz-panel.XXXXXX")"
+  {
+    echo "# Generado por el Panel IA Server (ollama-panel-env). No editar a mano."
+    echo "[Service]"
+    while IFS='=' read -r k v; do
+      [ -n "$k" ] && echo "Environment=\"$k=$v\""
+    done
+  } > "$tmp"
+  chmod 644 "$tmp"
+  mv "$tmp" "$DROPIN"
+  systemctl daemon-reload
+  systemctl restart ollama
+}
+
+[ "$(id -u)" -eq 0 ] || die "hay que ejecutarlo como root (sudo)."
+cmd="${1:-}"
+case "$cmd" in
+  get)
+    read_current
+    ;;
+  set)
+    [ $# -eq 3 ] || die "uso: set CLAVE VALOR"
+    valid "$2" "$3" || die "variable o valor no permitido: $2=$3"
+    { read_current | grep -v "^$2=" || true; echo "$2=$3"; } | write_dropin
+    echo "ok"
+    ;;
+  unset)
+    [ $# -eq 2 ] || die "uso: unset CLAVE"
+    valid "$2" "0" || valid "$2" "1" || die "variable no permitida: $2"
+    { read_current | grep -v "^$2=" || true; } | write_dropin
+    echo "ok"
+    ;;
+  *)
+    die "uso: get | set CLAVE VALOR | unset CLAVE"
+    ;;
+esac

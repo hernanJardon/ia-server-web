@@ -48,7 +48,7 @@ done
 
 if [ "$WANT_REMOVE" = 1 ]; then
   systemctl disable --now ollama-panel 2>/dev/null || true
-  rm -f "$UNIT" "$ENV_FILE"
+  rm -f "$UNIT" "$ENV_FILE" /usr/local/sbin/ollama-panel-env /etc/sudoers.d/ollama-panel
   rm -rf "$APP_DIR"
   systemctl daemon-reload
   echo "Servicio eliminado. Los datos (datasets, trabajos, entorno) siguen en $DATA_DIR."
@@ -84,6 +84,15 @@ fi
 # Leer los logs de Ollama con journalctl, y los archivos GGUF de los modelos para cuantizarlos
 if getent group systemd-journal >/dev/null; then usermod -aG systemd-journal "$PANEL_USER"; fi
 if getent group ollama >/dev/null; then usermod -aG ollama "$PANEL_USER"; fi
+
+# Ayudante para que el panel cambie unas pocas variables de Ollama (reparto entre GPU, etc.).
+# Va fuera de $APP_DIR y es de root: la app se autoactualiza y su carpeta la escribe el usuario del
+# panel, así que un script de ahí con sudo permitiría ejecutar cualquier cosa como root.
+install -o root -g root -m 755 "$APP_DIR/tools/ollama-panel-env" /usr/local/sbin/ollama-panel-env
+SUDOERS=/etc/sudoers.d/ollama-panel
+printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/ollama-panel-env\n' "$PANEL_USER" > "$SUDOERS.tmp"
+chmod 440 "$SUDOERS.tmp"
+if visudo -cf "$SUDOERS.tmp" >/dev/null; then mv "$SUDOERS.tmp" "$SUDOERS"; else rm -f "$SUDOERS.tmp"; echo "Aviso: no se pudo crear la regla de sudo; el panel no podrá cambiar el reparto de GPU de Ollama."; fi
 
 if [ ! -f "$ENV_FILE" ]; then
   echo
