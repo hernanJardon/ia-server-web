@@ -21,6 +21,18 @@ PANEL_PORT="${PANEL_PORT:-8080}"
 die() { echo "Error: $*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || die "ejecútalo con sudo."
 
+# En Debian/Ubuntu, "python3 -m venv" existe siempre pero no puede crear entornos sin ensurepip,
+# que viene en python3.X-venv. Se instala si falta.
+ensure_venv() {
+  python3 -c "import ensurepip" >/dev/null 2>&1 && return 0
+  local pyver; pyver="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+  if command -v apt-get >/dev/null; then
+    echo "== Instalando python${pyver}-venv (necesario para crear entornos de Python)"
+    apt-get install -y "python${pyver}-venv" || apt-get install -y python3-venv || die "no se pudo instalar python${pyver}-venv."
+  fi
+  python3 -c "import ensurepip" >/dev/null 2>&1 || die "falta ensurepip: instala python${pyver}-venv y repite."
+}
+
 WANT_TRAIN=0; WANT_LLAMA=0; WANT_REMOVE=0; WANT_VLLM=0
 for arg in "$@"; do
   case "$arg" in
@@ -114,10 +126,11 @@ fi
 
 if [ "$WANT_TRAIN" = 1 ]; then
   echo "== Preparando el entorno de entrenamiento en $DATA_DIR/venv (varios GB, tarda unos minutos)"
-  python3 -m venv --help >/dev/null 2>&1 || die "falta el módulo venv (sudo apt install python3-venv)."
+  ensure_venv
   sudo -u "$PANEL_USER" -H bash -euo pipefail <<EOF
 cd "$DATA_DIR"
-[ -x venv/bin/python ] || python3 -m venv venv
+# Un entorno sin pip quedó a medias en un intento anterior: se rehace.
+[ -x venv/bin/pip ] || { rm -rf venv; python3 -m venv venv; }
 venv/bin/pip install --upgrade pip
 venv/bin/pip install torch transformers peft accelerate bitsandbytes safetensors sentencepiece protobuf
 venv/bin/pip install ./llama.cpp/gguf-py
@@ -127,10 +140,10 @@ fi
 
 if [ "$WANT_VLLM" = 1 ]; then
   echo "== Instalando vLLM en $DATA_DIR/vllm-venv (entorno propio: trae su versión de PyTorch; varios GB)"
-  python3 -m venv --help >/dev/null 2>&1 || die "falta el módulo venv (sudo apt install python3-venv)."
+  ensure_venv
   sudo -u "$PANEL_USER" -H bash -euo pipefail <<EOF
 cd "$DATA_DIR"
-[ -x vllm-venv/bin/python ] || python3 -m venv vllm-venv
+[ -x vllm-venv/bin/pip ] || { rm -rf vllm-venv; python3 -m venv vllm-venv; }
 vllm-venv/bin/pip install --upgrade pip
 vllm-venv/bin/pip install vllm
 EOF
