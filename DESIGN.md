@@ -1,5 +1,5 @@
 ---
-name: Panel Ollama
+name: Panel IA Server
 description: Panel web para administrar los modelos de Ollama en un servidor con 4 GPU de 12 GB.
 colors:
   ground: "#f2f5f5"
@@ -181,7 +181,7 @@ components:
     width: "min(440px, calc(100vw - 32px))"
 ---
 
-# Design System: Panel Ollama
+# Design System: Panel IA Server
 
 ## Overview
 
@@ -283,7 +283,7 @@ Rectangulares, firmes, con borde de tinta.
 - **Variantes:** `textarea` de 84 px redimensionable en vertical; campos `.code` en monoespaciada; botón de archivo con el mismo aspecto que un botón base; casillas de 16 px teñidas de petróleo.
 
 ### Navigation
-Riel petróleo a toda altura, pegajoso, con filete derecho. Marca "Panel Ollama" en semicondensada 600 a 1.25rem. Enlaces en semicondensada 500 a 1rem, tinta de riel atenuada, con contador a la derecha; hover sobre el petróleo de filete; la sección actual (`aria-current="page"`) en amarillo de etiqueta con tinta. Pie con el estado del servidor y el botón de tema con bordes de riel. En móvil el riel es estático y se despliega con "Menú" (44 px); los enlaces crecen a 13 px de relleno vertical.
+Riel petróleo a toda altura, pegajoso, con filete derecho. Marca "Panel IA Server" en semicondensada 600 a 1.25rem. Enlaces en semicondensada 500 a 1rem, tinta de riel atenuada, con contador a la derecha; hover sobre el petróleo de filete; la sección actual (`aria-current="page"`) en amarillo de etiqueta con tinta. Pie con el estado del servidor y el botón de tema con bordes de riel. En móvil el riel es estático y se despliega con "Menú" (44 px); los enlaces crecen a 13 px de relleno vertical.
 
 ### Bloques
 Contenedor de cada grupo: fondo blanco, filete de 1 px, cabecera de 2 px de tinta, radio de 3 px, relleno 14px 16px. Su título empieza pegado arriba. Una barra de herramientas opcional pone título, buscador y conmutadores en la misma fila.

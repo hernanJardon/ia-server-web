@@ -1010,7 +1010,7 @@ class Handler(BaseHTTPRequestHandler):
                 return True
             limiter.fail(ip)
         self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Panel Ollama", charset="UTF-8"')
+        self.send_header("WWW-Authenticate", 'Basic realm="Panel IA Server", charset="UTF-8"')
         self.send_header("Content-Length", "0")
         self.send_header("Connection", "close")
         self.close_connection = True
@@ -1101,7 +1101,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         if bearer:
-            self.send_header("WWW-Authenticate", 'Bearer realm="Panel Ollama"')
+            self.send_header("WWW-Authenticate", 'Bearer realm="Panel IA Server"')
         self.send_header("Connection", "close")
         self.close_connection = True
         self.end_headers()
@@ -1414,7 +1414,7 @@ def make_server():
 
 
 if __name__ == "__main__":
-    print("Panel Ollama en %s://%s:%d  ->  %s%s" % (
+    print("Panel IA Server en %s://%s:%d  ->  %s%s" % (
         "https" if TLS_CERT and TLS_KEY else "http", HOST, PORT, OLLAMA_URL,
         "  (con contraseña)" if PASSWORD else "  (SIN contraseña)"), flush=True)
     import signal

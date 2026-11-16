@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instala el Panel Ollama como servicio systemd en la misma máquina que Ollama.
+# Instala el Panel IA Server como servicio systemd en la misma máquina que Ollama.
 #
 #   sudo ./install.sh              instala o actualiza el panel
 #   sudo ./install.sh --llama-cpp  además compila llama-quantize y llama-server (cuantizar y motor llama.cpp)

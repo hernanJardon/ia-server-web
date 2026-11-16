@@ -1,4 +1,4 @@
-# Panel Ollama
+# Panel IA Server
 
 Panel web para administrar un servidor [Ollama](https://ollama.com) sin entrar por SSH. Se instala en la misma máquina Linux que Ollama y se usa desde el navegador de cualquier equipo de la red local.
 
