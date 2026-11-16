@@ -1203,31 +1203,19 @@ function speakableText(text) {
   return text.replace(/```[\s\S]*?```/g, " (código omitido) ").replace(/[*_#>`|]/g, "").replace(/\s+/g, " ").trim().slice(0, 4000);
 }
 
-/** Frases de hasta ~220 caracteres: la primera se genera rápido y suena mientras se preparan las demás. */
+/**
+ * Bloques de frases completas de hasta ~400 caracteres. Cada petición de voz añade una espera inicial, así que
+ * conviene pocos bloques; partir solo evita que una respuesta larga pida una sola síntesis enorme.
+ */
 function splitSentences(text) {
   const parts = text.match(/[^.!?¡¿…\n]+[.!?…]*["»)]*\s*|[¡¿][^.!?…\n]*[.!?…]*\s*/g) || [text];
   const out = [];
   let cur = "";
   for (const p of parts) {
-    if ((cur + p).length > 220 && cur) { out.push(cur.trim()); cur = ""; }
+    if ((cur + p).length > 400 && cur) { out.push(cur.trim()); cur = ""; }
     cur += p;
-    // La primera frase va sola, en cuanto tiene algo de cuerpo: es la que marca cuándo empieza a sonar.
-    if (!out.length && cur.trim().length >= 12 && /[.!?…]["»)]*\s*$/.test(cur)) { out.push(cur.trim()); cur = ""; }
   }
   if (cur.trim()) out.push(cur.trim());
-  // La voz se genera a ~0,6x tiempo real: un primer trozo largo retrasa mucho el primer sonido.
-  // Se corta en la pausa (coma, "y", "porque"…) más cercana al carácter 70 entre el 30 y el 120;
-  // sin pausas, en el último espacio antes del 80.
-  if (out.length && out[0].length > 90) {
-    const first = out[0];
-    let cut = -1, best = Infinity;
-    for (const m of first.matchAll(/[,;:](?=\s)|\s(?=(?:y|o|pero|porque|que|cuando|aunque)\s)/g)) {
-      const at = m.index + (m[0] === " " ? 0 : 1);
-      if (at >= 30 && at <= 120 && Math.abs(at - 70) < best && first.length - at > 15) { best = Math.abs(at - 70); cut = at; }
-    }
-    if (cut < 0) cut = first.lastIndexOf(" ", 80);
-    if (cut > 20) out.splice(0, 1, first.slice(0, cut).trim(), first.slice(cut).trim());
-  }
   return out.filter((s) => /[\p{L}\p{N}]/u.test(s));
 }
 
@@ -1255,9 +1243,13 @@ function stopSpeech() {
  * en vez de a saltos. Guarda todo el PCM para dejar un reproductor al final.
  */
 class StreamingWavPlayer {
-  constructor(ctx, onState) {
+  /** expected: segundos de audio que se esperan en total (estimados por el texto), para calcular el colchón. */
+  constructor(ctx, onState, expected) {
     this.ctx = ctx;
     this.onState = onState || (() => {});
+    this.expected = expected || 0;
+    this.received = 0;     // segundos de audio recibidos
+    this.firstAt = null;   // reloj del AudioContext al llegar el primer audio
     this.header = new Uint8Array(0);
     this.format = null;
     this.carry = null;
@@ -1266,7 +1258,6 @@ class StreamingWavPlayer {
     this.queued = 0;      // segundos esperando a sonar
     this.nextTime = 0;
     this.playing = false;
-    this.cushion = 1.2;   // segundos antes de empezar o reanudar
     this.sources = new Set();
   }
 
@@ -1311,18 +1302,35 @@ class StreamingWavPlayer {
     }
     this.queue.push(ab);
     this.queued += ab.duration;
+    if (this.firstAt == null) this.firstAt = this.ctx.currentTime;
+    this.received += ab.duration;
     this.pump(false);
+  }
+
+  /**
+   * Colchón para que, una vez empiece, suene seguido hasta el final: si el servidor genera a r segundos de audio
+   * por segundo (r < 1) y faltan R segundos por llegar, tardarán R/r; mientras, suena lo acumulado más R.
+   * No hay corte si acumulado >= R·(1/r − 1). Con un 10 % de margen y medio segundo por las pausas entre trozos.
+   */
+  needed() {
+    if (this.fast) return 1.2; // "en cuanto llegue": colchón mínimo, se acepta que se corte
+    const elapsed = this.ctx.currentTime - (this.firstAt ?? this.ctx.currentTime);
+    if (this.received < 1 || elapsed < 0.5) return Infinity; // aún sin medida fiable de la velocidad
+    const rate = this.received / elapsed;
+    this.rate = rate;
+    if (rate >= 1.05) return 0.8;
+    const remaining = Math.max(0, this.expected - this.received);
+    return Math.max(0.8, remaining * (1 / rate - 1) * 1.1 + 0.5);
   }
 
   pump(final) {
     const now = this.ctx.currentTime;
     if (this.playing && this.nextTime < now - 0.05) {
-      // Se vació el colchón: pausa breve y uno algo mayor para la próxima vez.
+      // Se vació aun así (la estimación se quedó corta): se vuelve a acumular con la medida actualizada.
       this.playing = false;
-      this.cushion = Math.min(4, this.cushion + 0.8);
       this.onState("buffering");
     }
-    if (!this.playing && (this.queued >= this.cushion || (final && this.queued > 0))) {
+    if (!this.playing && ((final && this.queued > 0) || this.queued >= this.needed())) {
       this.playing = true;
       this.nextTime = Math.max(now + 0.05, this.nextTime);
       this.onState("playing");
@@ -1342,8 +1350,9 @@ class StreamingWavPlayer {
   }
 
   /** Se acabó un WAV: lo que quede en cola suena aunque no llegue al colchón. */
-  flush() {
-    this.pump(true);
+  /** Terminó un trozo; si es el último, lo que quede suena aunque no llegue al colchón. */
+  flush(last) {
+    this.pump(!!last);
     if (this.format) this.lastFormat = this.format;
     this.header = new Uint8Array(0); // el siguiente trozo trae su propia cabecera
     this.format = null;
@@ -1385,10 +1394,11 @@ class StreamingWavPlayer {
 
 function browserSpeak(input) {
   if (!window.speechSynthesis) return false;
+  const lang = ($("#chat-tts-lang").value || "es").slice(0, 2);
   const u = new SpeechSynthesisUtterance(input);
-  const es = speechSynthesis.getVoices().find((v) => v.lang && v.lang.toLowerCase().startsWith("es"));
-  if (es) u.voice = es;
-  u.lang = es ? es.lang : "es-ES";
+  const match = speechSynthesis.getVoices().find((v) => v.lang && v.lang.toLowerCase().startsWith(lang));
+  if (match) u.voice = match;
+  u.lang = match ? match.lang : lang;
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
   return true;
@@ -1414,17 +1424,32 @@ async function speak(text, bubble) {
   // Trozos en orden: Ollama atiende una petición por modelo, así que se piden seguidos y se encadenan en un solo
   // reproductor; dentro de cada trozo el audio suena según llega.
   const pieces = splitSentences(input);
+  const language = $("#chat-tts-lang").value || "es";
+  const voiceKind = $("#chat-tts-voice").value || "female";
   const t0 = performance.now();
   let firstSound = null;
+  // Unos 12 caracteres por segundo de voz (medido con lfm3); sirve para calcular el colchón sin cortes.
+  const expected = input.length / 12;
   const player = new StreamingWavPlayer(ttsContext(), (st) => {
     if (st === "playing" && firstSound == null) firstSound = (performance.now() - t0) / 1000;
-    note.textContent = st === "playing" ? "Reproduciendo…" : "Acumulando audio (el servidor genera la voz algo más lenta que el tiempo real)…";
-  });
+    note.textContent = st === "playing" ? "Reproduciendo…" : "Reanudando en cuanto haya audio suficiente…";
+  }, expected);
+  player.fast = $("#chat-tts-mode").value === "fast";
   tts.player = player;
+  // Mientras acumula, se muestra cuánto falta para que pueda sonar seguido.
+  const progress = setInterval(() => {
+    if (player.playing || player.stopped) return;
+    const need = player.needed();
+    note.textContent = need === Infinity ? "Generando voz…"
+      : "Preparando la voz para que suene sin cortes: " + player.queued.toFixed(1).replace(".", ",") + " de " + need.toFixed(1).replace(".", ",") + " s" +
+        (player.rate ? " (el servidor la genera a " + Math.round(player.rate * 100) + " % del tiempo real)" : "");
+  }, 500);
   try {
-    for (const piece of pieces) {
+    for (let i = 0; i < pieces.length; i++) {
+      const piece = pieces[i];
+      // language y voice son variables de la plantilla de voz de LFM3; sin language, lee en inglés.
       const res = await fetch("/ollama-v1/audio/speech", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, input: piece, voice: "default", response_format: "wav" }), signal: ctrl.signal });
+        body: JSON.stringify({ model, input: piece, voice: voiceKind, language, response_format: "wav" }), signal: ctrl.signal });
       const type = res.headers.get("Content-Type") || "";
       if (!res.ok || !type.startsWith("audio")) {
         const body = await res.text();
@@ -1438,14 +1463,16 @@ async function speak(text, bubble) {
         if (end) break;
         player.push(value);
       }
-      player.flush();
+      player.flush(i === pieces.length - 1);
     }
     await player.finished();
+    clearInterval(progress);
     if (ctrl.signal.aborted || player.stopped) return;
     const wav = player.toWav();
     if (wav) note.before(h("audio", { controls: true, src: URL.createObjectURL(wav) }));
     done("Voz de " + model + (firstSound != null ? " · empezó a sonar a los " + firstSound.toFixed(1).replace(".", ",") + " s" : ""));
   } catch (e) {
+    clearInterval(progress);
     if (e.name === "AbortError") { done("Voz detenida."); return; }
     done(model + " no generó voz (" + e.message + "). Uso la voz del navegador.");
     browserSpeak(input);

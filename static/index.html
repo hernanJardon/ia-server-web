@@ -249,6 +249,21 @@
         <div class="wide voice-opts" id="chat-voice-wrap" hidden>
           <label class="check"><input id="chat-speak" type="checkbox"> Responder también con voz</label>
           <label>Voz generada por <select id="chat-tts-model"></select></label>
+          <label>Idioma de la voz
+            <select id="chat-tts-lang">
+              <option value="es" selected>Español</option><option value="en">Inglés (EE. UU.)</option><option value="en-gb">Inglés (Reino Unido)</option>
+              <option value="pt">Portugués</option><option value="fr">Francés</option><option value="it">Italiano</option><option value="de">Alemán</option>
+            </select>
+          </label>
+          <label>Voz
+            <select id="chat-tts-voice"><option value="female" selected>Femenina</option><option value="male">Masculina</option></select>
+          </label>
+          <label>Reproducción
+            <select id="chat-tts-mode">
+              <option value="smooth" selected>Seguida, sin cortes</option>
+              <option value="fast">Inmediata, con pausas</option>
+            </select>
+          </label>
         </div>
         <label class="wide">Prompt de sistema (opcional)
           <textarea id="chat-system" rows="2"></textarea>
