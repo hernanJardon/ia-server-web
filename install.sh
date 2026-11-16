@@ -81,6 +81,10 @@ else
   sudo -u "$PANEL_USER" -H git clone --quiet "$REPO_URL" "$APP_DIR"
 fi
 
+# El código ya está actualizado: si un paso posterior falla (p. ej. compilar llama.cpp), se reinicia
+# igualmente el panel para que no siga corriendo la versión anterior con la interfaz nueva.
+trap 'rc=$?; if [ "$rc" -ne 0 ] && [ -f "$UNIT" ]; then echo "La instalación falló (código $rc); reinicio el panel con el código nuevo."; systemctl restart ollama-panel || true; fi' EXIT
+
 # Leer los logs de Ollama con journalctl, y los archivos GGUF de los modelos para cuantizarlos
 if getent group systemd-journal >/dev/null; then usermod -aG systemd-journal "$PANEL_USER"; fi
 if getent group ollama >/dev/null; then usermod -aG ollama "$PANEL_USER"; fi

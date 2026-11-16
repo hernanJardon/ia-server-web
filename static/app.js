@@ -486,19 +486,29 @@ function renderGpus() {
 let ollamaCfg = null;
 
 async function loadOllamaCfg() {
-  try { ollamaCfg = await api("/panel/ollama-config"); } catch (e) { ollamaCfg = { available: false, reason: e.message, effective: {} }; }
+  try { ollamaCfg = await api("/panel/ollama-config"); } catch (e) {
+    // 404: el navegador tiene la interfaz nueva pero el proceso del panel sigue con el código anterior.
+    const stale = /Ruta desconocida/.test(e.message);
+    ollamaCfg = { available: false, effective: null, reason: stale
+      ? "El servicio del panel sigue con la versión anterior cargada. Reinícialo en el servidor: sudo systemctl restart ollama-panel (y, si no lo has hecho, sudo ./install.sh para el permiso de cambiar Ollama)."
+      : e.message };
+  }
   renderSched();
 }
 
 function renderSched() {
   const box = $("#ollama-sched");
   if (!ollamaCfg || !(state.sys && state.sys.gpus && state.sys.gpus.length > 1)) { box.replaceChildren(); return; }
-  const spread = /^(1|true)$/i.test((ollamaCfg.effective || {}).OLLAMA_SCHED_SPREAD || "");
+  // Sin la ruta, el valor efectivo sale de lo que el panel lee de systemctl (si lo pudo leer).
+  const env = ollamaCfg.effective || (state.sys && state.sys.ollama_env) || null;
+  const spread = env ? /^(1|true)$/i.test(env.OLLAMA_SCHED_SPREAD || "") : null;
   const seg = h("fieldset", { class: "seg" }, h("legend", {}, "Reparto de los modelos de Ollama entre GPU"),
     [["0", "Automático: una GPU si cabe"], ["1", "Siempre en todas"]].map(([v, label]) =>
-      h("label", {}, h("input", { type: "radio", name: "sched", value: v, checked: (v === "1") === spread, disabled: !ollamaCfg.available,
+      h("label", {}, h("input", { type: "radio", name: "sched", value: v, checked: spread !== null && (v === "1") === spread, disabled: !ollamaCfg.available,
         onchange: () => changeSched(v) }), h("span", {}, label))));
-  fill(box, seg, h("p", { class: "note" }, !ollamaCfg.available ? ollamaCfg.reason
+  const now = spread === null ? "No se sabe qué reparto usa Ollama ahora. "
+    : spread ? "Ahora Ollama tiene OLLAMA_SCHED_SPREAD=1: reparte cada modelo entre todas las GPU. " : "";
+  fill(box, seg, h("p", { class: "note" }, !ollamaCfg.available ? now + ollamaCfg.reason
     : spread ? "Ahora cada modelo se reparte entre todas las GPU aunque quepa en una: más lento para modelos pequeños, y deja menos sitio para tener varios cargados."
     : "Si el modelo cabe en una GPU, Ollama lo carga en la que tenga más memoria libre; si no cabe, lo reparte. Cambiarlo reinicia Ollama y descarga los modelos de memoria."));
 }
