@@ -818,15 +818,54 @@ class Updater:
     """La app instalada es un clon de git: comprobar = fetch, actualizar = pull --ff-only y reiniciar el servicio."""
     INTERVAL = 6 * 3600
 
+    LOG_PATH = os.path.join(DATA, "update.log")
+
     def __init__(self):
         self.lock = threading.Lock()
+        self.log_lock = threading.Lock()
         self.state = {"checked": None, "behind": 0, "log": [], "error": None, "updating": False,
                       "last_update": None, "remote": None}
+        try:  # el registro sobrevive a los reinicios, pero no crece sin límite
+            if os.path.getsize(self.LOG_PATH) > 512 * 1024:
+                with open(self.LOG_PATH, "rb") as f:
+                    f.seek(-256 * 1024, os.SEEK_END)
+                    tail = f.read()
+                with open(self.LOG_PATH, "wb") as f:
+                    f.write(tail[tail.find(b"\n") + 1:])
+        except OSError:
+            pass
 
-    def git(self, *args, timeout=120):
+    def say(self, text):
+        """Añade líneas al registro de actualización que muestra la vista Actualizaciones."""
+        stamp = time.strftime("%H:%M:%S")
+        with self.log_lock, open(self.LOG_PATH, "a", encoding="utf-8") as f:
+            for line in str(text).rstrip().splitlines() or [""]:
+                f.write("%s  %s\n" % (stamp, line))
+
+    def read_log(self, offset):
+        try:
+            with open(self.LOG_PATH, "rb") as f:
+                size = os.path.getsize(self.LOG_PATH)
+                if offset > size:  # el archivo se recortó: empezar de nuevo
+                    offset = 0
+                f.seek(offset)
+                data = f.read(256 * 1024)
+        except OSError:
+            return {"text": "", "offset": 0}
+        return {"text": data.decode("utf-8", "replace"), "offset": offset + len(data)}
+
+    def git(self, *args, timeout=120, quiet=False):
+        if not quiet:
+            self.say("$ git " + " ".join(args))
         r = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, encoding="utf-8",
                            errors="replace", timeout=timeout)
+        out = (r.stdout + r.stderr).strip()
+        if out and not quiet:
+            self.say(out[:4000])
         if r.returncode != 0:
+            if quiet:
+                self.say("$ git " + " ".join(args) + "\n" + out[:2000])
+            self.say("  (código %d)" % r.returncode)
             raise RuntimeError((r.stderr or r.stdout).strip()[:400] or "git falló")
         return r.stdout.strip()
 
@@ -843,27 +882,38 @@ class Updater:
         out["unavailable"] = reason
         if not reason:
             try:
-                out["current"] = self.git("log", "-1", "--format=%h%x09%s%x09%cI")
-                out["branch"] = self.git("rev-parse", "--abbrev-ref", "HEAD")
-                out["remote"] = self.git("remote", "get-url", "origin")
+                out["current"] = self.git("log", "-1", "--format=%h%x09%s%x09%cI", quiet=True)
+                out["branch"] = self.git("rev-parse", "--abbrev-ref", "HEAD", quiet=True)
+                out["remote"] = self.git("remote", "get-url", "origin", quiet=True)
             except (RuntimeError, OSError, subprocess.SubprocessError) as e:
                 out["unavailable"] = str(e)
         return out
 
-    def check(self):
+    def check(self, auto=False):
         reason = self.available()
         if reason:
             raise ValueError(reason)
+        self.say("")
+        self.say("== Buscando actualizaciones" + (" (automático)" if auto else ""))
         try:
-            branch = self.git("rev-parse", "--abbrev-ref", "HEAD")
-            self.git("fetch", "--quiet", "origin", branch, timeout=60)
-            behind = int(self.git("rev-list", "--count", "HEAD..origin/" + branch) or 0)
-            self.state["remote_head"] = self.git("rev-parse", "origin/" + branch)
-            log = self.git("log", "--format=%h%x09%s%x09%cI", "HEAD..origin/" + branch, "-n", "30")
-            dirty = bool(self.git("status", "--porcelain", "--untracked-files=no"))
+            branch = self.git("rev-parse", "--abbrev-ref", "HEAD", quiet=True)
+            self.git("fetch", "origin", branch, timeout=60)
+            behind = int(self.git("rev-list", "--count", "HEAD..origin/" + branch, quiet=True) or 0)
+            self.state["remote_head"] = self.git("rev-parse", "origin/" + branch, quiet=True)
+            log = self.git("log", "--format=%h%x09%s%x09%cI", "HEAD..origin/" + branch, "-n", "30", quiet=True)
+            dirty = bool(self.git("status", "--porcelain", "--untracked-files=no", quiet=True))
         except (RuntimeError, OSError, subprocess.SubprocessError) as e:
             self.state.update(checked=time.time(), error="No se pudo consultar GitHub: %s" % e)
+            self.say("Error: " + self.state["error"])
             raise ValueError(self.state["error"])
+        if behind:
+            self.say("%d cambio(s) nuevo(s) en origin/%s:" % (behind, branch))
+            for line in log.splitlines():
+                self.say("  " + " ".join(line.split("\t")[:2]))
+        else:
+            self.say("Al día.")
+        if dirty:
+            self.say("Aviso: hay cambios locales en la copia instalada; la actualización automática se salta.")
         self.state.update(checked=time.time(), error=None, behind=behind, dirty=dirty,
                           log=[dict(zip(("hash", "subject", "date"), l.split("\t", 2))) for l in log.splitlines() if l])
         return self.info()
@@ -886,43 +936,67 @@ class Updater:
             if reasons and not force:
                 raise ValueError("Ahora no: " + "; ".join(reasons) + ".")
             self.state["updating"] = True
+        self.say("")
+        self.say("== Actualizando" + (" (forzado: " + "; ".join(reasons) + ")" if reasons else ""))
         try:
-            old = self.git("rev-parse", "HEAD")
-            branch = self.git("rev-parse", "--abbrev-ref", "HEAD")
-            self.git("pull", "--ff-only", "--quiet", "origin", branch, timeout=120)
-            new = self.git("rev-parse", "HEAD")
+            old = self.git("rev-parse", "HEAD", quiet=True)
+            branch = self.git("rev-parse", "--abbrev-ref", "HEAD", quiet=True)
+            self.git("pull", "--ff-only", "origin", branch, timeout=120)
+            new = self.git("rev-parse", "HEAD", quiet=True)
             if new == old:
+                self.say("Ya estaba al día.")
                 self.state.update(updating=False, behind=0, log=[])
                 return {"updated": False, "message": "Ya estaba al día."}
-            check = subprocess.run([sys.executable, "-m", "py_compile", os.path.join(ROOT, "server.py"),
-                                    os.path.join(ROOT, "training", "train_lora.py"), os.path.join(ROOT, "training", "quantize_gguf.py")],
-                                   capture_output=True, text=True, timeout=60)
+            self.git("log", "--format=  %h %s", old + ".." + new)
+            files = [os.path.join(ROOT, "server.py"), os.path.join(ROOT, "training", "train_lora.py"),
+                     os.path.join(ROOT, "training", "quantize_gguf.py")]
+            self.say("$ python3 -m py_compile server.py training/*.py")
+            check = subprocess.run([sys.executable, "-m", "py_compile"] + files, capture_output=True, text=True, timeout=60)
             if check.returncode != 0:
+                self.say(check.stderr.strip()[:2000])
+                self.say("La versión nueva no compila: se vuelve a %s." % old[:7])
                 self.git("reset", "--hard", old)
                 self.state["updating"] = False
                 self.state["bad_head"] = new  # la automática no lo reintenta hasta que llegue otro commit
                 raise ValueError("La versión nueva no compila y se ha vuelto a la anterior: " + check.stderr.strip()[:300])
+            self.say("Compila correctamente.")
         except (RuntimeError, OSError, subprocess.SubprocessError) as e:
             self.state["updating"] = False
+            self.say("Error: %s" % e)
             raise ValueError("No se pudo actualizar: %s" % e)
         self.state.update(last_update=time.time(), behind=0, log=[])
         if os.environ.get("INVOCATION_ID"):
             # systemd (Restart=on-failure) vuelve a arrancar el panel con el código nuevo.
+            self.say("Actualizado de %s a %s. Reiniciando el servicio ollama-panel…" % (old[:7], new[:7]))
             threading.Timer(1.5, lambda: os._exit(3)).start()
             return {"updated": True, "restarting": True, "message": "Actualizado a %s. El panel se reinicia." % new[:7]}
+        self.say("Actualizado de %s a %s. El panel no corre con systemd: reinícialo a mano." % (old[:7], new[:7]))
         self.state["updating"] = False
         return {"updated": True, "restarting": False, "message": "Actualizado a %s. Reinicia el panel para usarlo." % new[:7]}
 
     def loop(self):
+        if not self.available():
+            try:
+                self.say("")
+                self.say("== Panel en marcha con la versión " + self.git("log", "-1", "--format=%h %s", quiet=True))
+            except (RuntimeError, OSError, subprocess.SubprocessError):
+                pass
         time.sleep(120)
         while True:
             s = load_settings()
             if s["auto_check"] and not self.available():
                 try:
-                    self.check()
-                    if (s["auto_install"] and self.state["behind"] and not self.state.get("dirty") and not self.busy()
-                            and self.state.get("remote_head") != self.state.get("bad_head")):
-                        self.apply()
+                    self.check(auto=True)
+                    if s["auto_install"] and self.state["behind"]:
+                        busy = self.busy()
+                        if self.state.get("dirty"):
+                            pass  # check() ya lo dejó anotado en el registro
+                        elif self.state.get("remote_head") == self.state.get("bad_head"):
+                            self.say("La versión de GitHub ya falló al compilar; se espera a la siguiente.")
+                        elif busy:
+                            self.say("Instalación automática aplazada: " + "; ".join(busy) + ".")
+                        else:
+                            self.apply()
                 except ValueError:
                     pass
             time.sleep(self.INTERVAL)
@@ -1261,6 +1335,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"ok": True})
         if rest == "update" and m == "GET":
             return self.send_json(200, updater.info())
+        if rest == "update/log" and m == "GET":
+            return self.send_json(200, updater.read_log(max(0, int(query.get("offset", ["0"])[0]))))
         if rest == "update/check" and m == "POST":
             return self.send_json(200, updater.check())
         if rest == "update/apply" and m == "POST":

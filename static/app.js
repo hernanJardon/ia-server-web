@@ -1589,12 +1589,53 @@ async function loadUpdate() {
 
 $("#update-check").addEventListener("click", async (e) => {
   e.target.disabled = true;
+  termFast(30);
   try { updateInfo = await api("/panel/update/check", { body: {} }); }
   catch (err) { notify(err.message, "error"); await loadUpdate(); return; }
   finally { e.target.disabled = false; }
   renderUpdate();
   renderUpdateBadge();
 });
+
+/* ---- registro de actualización */
+
+const term = { offset: 0, fastUntil: 0, timer: null, loaded: false };
+
+function termLine(line) {
+  const body = line.replace(/^\d\d:\d\d:\d\d {2}/, "");
+  const cls = /^\$ /.test(body) ? "cmd" : /^== /.test(body) ? "head"
+    : /^(Error|  \(código)|no compila|aplazada|falló/.test(body) ? "err"
+    : /^(Al día\.|Compila correctamente\.|Actualizado )/.test(body) ? "ok" : "";
+  return cls ? h("span", { class: cls }, line + "\n") : document.createTextNode(line + "\n");
+}
+
+async function pollTerm() {
+  const pre = $("#update-term");
+  let data;
+  try { data = await api("/panel/update/log?offset=" + term.offset); }
+  catch (e) { if (!term.loaded) pre.textContent = "No se pudo leer el registro: " + e.message; return; }
+  if (data.offset < term.offset || !term.loaded) { pre.replaceChildren(); }
+  term.loaded = true;
+  term.offset = data.offset;
+  if (data.text) {
+    if (pre.dataset.empty) { pre.replaceChildren(); delete pre.dataset.empty; }
+    const lines = data.text.replace(/\n$/, "").split("\n");
+    pre.append(...lines.map(termLine));
+    while (pre.childNodes.length > 2000) pre.firstChild.remove();
+    if ($("#update-term-follow").checked) pre.scrollTop = pre.scrollHeight;
+  }
+  if (!pre.childNodes.length) { pre.textContent = "Sin actividad todavía. Pulsa Buscar actualizaciones."; pre.dataset.empty = "1"; }
+}
+
+/** Durante una búsqueda o instalación, el registro se refresca cada segundo un rato. */
+function termFast(seconds = 90) {
+  term.fastUntil = Date.now() + seconds * 1000;
+  if (term.timer) return;
+  term.timer = setInterval(() => {
+    if (Date.now() > term.fastUntil || currentView() !== "actualizar") { clearInterval(term.timer); term.timer = null; return; }
+    pollTerm();
+  }, 1000);
+}
 
 /** Tras actualizar, el servicio se reinicia: esperar a que vuelva y recargar la página con el código nuevo. */
 async function waitForRestart() {
@@ -1608,6 +1649,7 @@ async function waitForRestart() {
 $("#update-apply").addEventListener("click", async (e) => {
   const btn = e.target;
   btn.disabled = true;
+  termFast(120);
   const run = async (force) => {
     const res = await api("/panel/update/apply", { body: { force } });
     notify(res.message);
@@ -1674,7 +1716,7 @@ function route() {
   if (view === "modelos") renderModelsView();
   if (view === "motores") enterEngines();
   if (view === "acceso") refreshStatus().then(renderAccess);
-  if (view === "actualizar") loadUpdate();
+  if (view === "actualizar") { loadUpdate(); pollTerm(); }
   if (view === "chat") fillChatSelect();
   if (view === "entrenamiento") { renderTrainEnv(); renderDatasets(); renderJobs(); }
   if (view === "registros") renderLogs();
@@ -1712,6 +1754,7 @@ setInterval(() => {
   if (view === "motores") refreshStatus().then(() => { renderEngines(); updateEngineFit(); });
   if (view === "entrenamiento") renderJobs();
   if (view === "cuantizar") renderJobList($("#quant-jobs"), "quantize");
+  if (view === "actualizar" && !term.timer) pollTerm(); // la búsqueda automática también se ve llegar
   if (view === "registros" && $("#log-follow").checked) renderLogs();
 }, 5000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden && currentView() === "modelos") refreshStatus(); });

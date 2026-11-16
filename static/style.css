@@ -244,6 +244,13 @@ summary:hover { color: var(--ink); }
 .spec-text dd { text-align: left; max-width: 72ch; }
 .alert { border: 1px solid var(--bad); color: var(--bad); background: var(--bad-ground); border-radius: var(--r); padding: 10px 12px; margin: 0 0 14px; max-width: none; }
 .alert.warn { border-color: var(--warn); color: var(--warn); background: var(--surface); }
+/* salida de comandos: fondo de tinta fijo en ambos temas para leerla como una terminal */
+pre.terminal { background: #0b1316; color: #d7e3e5; border-color: #0b1316; min-height: 220px; max-height: 420px; }
+pre.terminal .cmd { color: #f2c200; }
+pre.terminal .head { color: #ffffff; font-weight: 700; }
+pre.terminal .err { color: #ff8f85; }
+pre.terminal .ok { color: #62d08c; }
+pre.terminal::selection, pre.terminal *::selection { background: #f2c200; color: #10181b; }
 .update-log { list-style: none; padding: 0; margin: 14px 0 0; }
 .update-log li { display: grid; grid-template-columns: 80px minmax(0, 1fr) auto; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .update-log code { background: none; padding: 0; }
