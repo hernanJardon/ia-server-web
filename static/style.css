@@ -282,6 +282,13 @@ pre.terminal::selection, pre.terminal *::selection { background: #f2c200; color:
 .msg details { color: var(--ink-2); font-size: 0.875rem; margin-top: 4px; }
 .msg details div { white-space: pre-wrap; margin-top: 4px; }
 .msg .stats { color: var(--ink-2); font-size: 0.8125rem; margin-top: 4px; }
+.msg audio { display: block; margin-top: 6px; height: 36px; max-width: 100%; }
+.voice-opts { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+.voice-opts > label:not(.check) { flex: 0 1 280px; }
+/* grabando: el botón cambia a rojo y el contador marca el tiempo; es el único estado que lo usa */
+#chat-mic[aria-pressed="true"] { background: var(--bad); border-color: var(--bad); color: var(--surface); }
+.rec-status { font: 500 0.875rem/1.2 var(--label); color: var(--ink-2); }
+.rec-status.on { color: var(--bad); }
 
 pre { font: 400 0.8125rem/1.5 var(--mono); background: var(--sunken); border: 1px solid var(--line);
   border-radius: var(--r); padding: 10px 12px; overflow: auto; max-height: 420px; white-space: pre-wrap; overflow-wrap: anywhere; }

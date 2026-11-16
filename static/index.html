@@ -246,6 +246,10 @@
         <label>Temperatura <input id="chat-temp" type="number" step="any" min="0" max="2" placeholder="la del modelo"></label>
         <label>Contexto (num_ctx) <input id="chat-ctx" type="number" step="1" min="256" placeholder="el del modelo"></label>
         <label class="check" id="chat-think-wrap" hidden><input id="chat-think" type="checkbox"> Mostrar razonamiento</label>
+        <div class="wide voice-opts" id="chat-voice-wrap" hidden>
+          <label class="check"><input id="chat-speak" type="checkbox"> Responder también con voz</label>
+          <label>Voz generada por <select id="chat-tts-model"></select></label>
+        </div>
         <label class="wide">Prompt de sistema (opcional)
           <textarea id="chat-system" rows="2"></textarea>
         </label>
@@ -255,11 +259,14 @@
       </div>
       <form id="chat-form">
         <label>Mensaje
-          <textarea id="chat-input" rows="3" required></textarea>
+          <textarea id="chat-input" rows="3" placeholder="Escribe, o pulsa Hablar si el modelo entiende audio"></textarea>
         </label>
         <div class="actions">
           <button class="primary" type="submit" id="chat-send">Enviar</button>
           <button type="button" id="chat-stop" disabled>Detener</button>
+          <button type="button" id="chat-mic" hidden aria-pressed="false">Hablar</button>
+          <span class="rec-status" id="chat-rec-status" aria-live="polite" hidden></span>
+          <label class="check" id="chat-audio-wrap" hidden>Audio <input id="chat-audio" type="file" accept="audio/*"></label>
           <label class="check" id="chat-image-wrap" hidden>Imagen <input id="chat-image" type="file" accept="image/*"></label>
           <button type="button" class="quiet apart" id="chat-clear">Vaciar conversación</button>
         </div>

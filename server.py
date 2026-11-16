@@ -1140,6 +1140,8 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(url.query)
             if path.startswith("/ollama/"):
                 return self.proxy(path[len("/ollama/"):], url.query)
+            if path.startswith("/ollama-v1/"):  # API compatible con OpenAI de Ollama (p. ej. /v1/audio/speech)
+                return self.proxy(path[len("/ollama-v1/"):], url.query, prefix="/v1/")
             em = re.match(r"^/engine/([0-9a-f]{8})/(.*)$", path)
             if em:
                 port = engines.port_of(em.group(1))

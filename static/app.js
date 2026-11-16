@@ -1081,6 +1081,160 @@ function updateChatCaps() {
   const caps = (m && m.capabilities) || [];
   $("#chat-think-wrap").hidden = !caps.includes("thinking");
   $("#chat-image-wrap").hidden = !(caps.includes("vision") || (t && t.engine && t.engine.vision));
+  // "audio" = entiende audio de entrada; "speech" = puede generar voz.
+  const hears = caps.includes("audio");
+  $("#chat-mic").hidden = !hears;
+  $("#chat-audio-wrap").hidden = !hears;
+  if (!hears) clearPendingAudio();
+  const speakers = (state.tags || []).filter((x) => (x.capabilities || []).includes("speech")).map((x) => x.name);
+  const sel = $("#chat-tts-model");
+  const prev = sel.value;
+  fill(sel, speakers.map((n) => h("option", { value: n }, n)), h("option", { value: "" }, "Voz del navegador"));
+  // Se respeta la elección del usuario; si no eligió, el propio modelo del chat si habla, o el primero que hable.
+  if (sel.dataset.touched && $$("option", sel).some((o) => o.value === prev)) sel.value = prev;
+  else sel.value = caps.includes("speech") ? t.model : (speakers[0] || "");
+  $("#chat-voice-wrap").hidden = false;
+}
+$("#chat-tts-model").addEventListener("change", (e) => { e.target.dataset.touched = "1"; });
+
+/* ---- voz: grabar, convertir a WAV de 16 kHz y reproducir respuestas */
+
+const voice = { recorder: null, chunks: [], stream: null, started: 0, timer: null, pending: null };
+
+/** LFM3 y similares esperan PCM mono a 16 kHz; el navegador graba en webm/opus, así que se recodifica aquí. */
+async function toWav16k(blob) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  let decoded;
+  try { decoded = await ctx.decodeAudioData(await blob.arrayBuffer()); }
+  catch (e) { throw new Error("El navegador no pudo leer ese audio. Prueba con WAV, MP3 u OGG."); }
+  finally { ctx.close(); }
+  const rate = 16000;
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * rate)), rate);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + pcm.length * 2, true); str(8, "WAVE"); str(12, "fmt ");
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
+  return { wav: new Blob([buf], { type: "audio/wav" }), seconds: decoded.duration };
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1]);
+    r.onerror = () => reject(new Error("No se pudo leer el audio."));
+    r.readAsDataURL(blob);
+  });
+}
+
+function recStatus(text, on) {
+  const el = $("#chat-rec-status");
+  el.hidden = !text;
+  el.textContent = text || "";
+  el.classList.toggle("on", !!on);
+}
+
+function clearPendingAudio() {
+  if (voice.pending) URL.revokeObjectURL(voice.pending.url);
+  voice.pending = null;
+  if (!voice.recorder) recStatus("");
+}
+
+async function setPendingAudio(blob, label) {
+  recStatus("Preparando el audio…");
+  try {
+    const { wav, seconds } = await toWav16k(blob);
+    clearPendingAudio();
+    voice.pending = { b64: await blobToBase64(wav), url: URL.createObjectURL(wav), label: label + " · " + seconds.toFixed(1).replace(".", ",") + " s" };
+    recStatus("Audio listo para enviar: " + voice.pending.label);
+  } catch (e) { recStatus(""); notify(e.message, "error"); }
+}
+
+async function startRecording() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    notify("El navegador solo deja usar el micrófono por HTTPS. Activa HTTPS en el panel (sudo ./install.sh --https) o adjunta un archivo de audio.", "error");
+    return;
+  }
+  try { voice.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) {
+    notify(e.name === "NotAllowedError" ? "Permiso de micrófono denegado. Actívalo en el candado de la barra de direcciones." : "No se pudo abrir el micrófono: " + e.message, "error");
+    return;
+  }
+  voice.chunks = [];
+  voice.recorder = new MediaRecorder(voice.stream);
+  voice.recorder.ondataavailable = (ev) => { if (ev.data.size) voice.chunks.push(ev.data); };
+  voice.recorder.onstop = async () => {
+    voice.stream.getTracks().forEach((tr) => tr.stop());
+    clearInterval(voice.timer);
+    const blob = new Blob(voice.chunks, { type: voice.recorder.mimeType });
+    voice.recorder = null;
+    $("#chat-mic").setAttribute("aria-pressed", "false");
+    $("#chat-mic").textContent = "Hablar";
+    await setPendingAudio(blob, "grabación");
+    if (voice.pending && !$("#chat-input").value.trim()) $("#chat-form").requestSubmit(); // hablar y soltar: se envía solo
+  };
+  voice.recorder.start();
+  voice.started = Date.now();
+  $("#chat-mic").setAttribute("aria-pressed", "true");
+  $("#chat-mic").textContent = "Detener y enviar";
+  const tick = () => recStatus("Grabando " + Math.floor((Date.now() - voice.started) / 1000) + " s", true);
+  tick();
+  voice.timer = setInterval(tick, 500);
+}
+
+$("#chat-mic").addEventListener("click", () => {
+  if (voice.recorder) voice.recorder.stop();
+  else startRecording();
+});
+$("#chat-audio").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (f) setPendingAudio(f, f.name);
+  e.target.value = "";
+});
+
+function speakableText(text) {
+  return text.replace(/```[\s\S]*?```/g, " (código omitido) ").replace(/[*_#>`|]/g, "").replace(/\s+/g, " ").trim().slice(0, 4000);
+}
+
+/** Voz con /v1/audio/speech de Ollama; si el modelo no la genera, voz del navegador, y se dice cuál sonó. */
+async function speak(text, bubble) {
+  const input = speakableText(text);
+  if (!input) return;
+  const model = $("#chat-tts-model").value;
+  const note = h("div", { class: "stats" }, "Generando voz…");
+  bubble.append(note);
+  if (model) {
+    try {
+      const res = await fetch("/ollama-v1/audio/speech", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, input, voice: "default", response_format: "wav" }) });
+      const type = res.headers.get("Content-Type") || "";
+      if (res.ok && type.startsWith("audio")) {
+        const url = URL.createObjectURL(await res.blob());
+        const player = h("audio", { controls: true, src: url });
+        note.replaceWith(player, h("div", { class: "stats" }, "Voz de " + model));
+        player.play().catch(() => { /* el navegador puede exigir un clic: queda el reproductor */ });
+        return;
+      }
+      const body = await res.text();
+      let msg = body;
+      try { const j = JSON.parse(body); msg = (j.error && (j.error.message || j.error)) || body; } catch (e) { /* texto */ }
+      note.textContent = model + " no generó voz (" + String(msg).slice(0, 140) + "). Uso la voz del navegador.";
+    } catch (e) { note.textContent = "No se pudo pedir la voz a Ollama (" + e.message + "). Uso la voz del navegador."; }
+  } else note.textContent = "Voz del navegador";
+  if (!window.speechSynthesis) { note.textContent += " Este navegador no tiene síntesis de voz."; return; }
+  const u = new SpeechSynthesisUtterance(input);
+  const es = speechSynthesis.getVoices().find((v) => v.lang && v.lang.toLowerCase().startsWith("es"));
+  if (es) u.voice = es;
+  u.lang = es ? es.lang : "es-ES";
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
 }
 
 /** Chat con una instancia de motor: API de OpenAI con streaming SSE, a través del proxy del panel. */
@@ -1126,7 +1280,9 @@ $("#chat-model").addEventListener("change", updateChatCaps);
 function chatBubble(role, text) {
   const textEl = h("div", { class: "text" }, text);
   const t = chatTarget();
-  const el = h("div", { class: "msg " + role }, h("div", { class: "who" }, role === "user" ? "Tú" : t ? t.label : ""), textEl);
+  // Un mensaje solo de voz no lleva caja de texto vacía: el reproductor ocupa su lugar.
+  const el = h("div", { class: "msg " + role }, h("div", { class: "who" }, role === "user" ? "Tú" : t ? t.label : ""),
+    role === "user" && !text ? null : textEl);
   $("#chat-empty").hidden = true;
   $("#chat-log").append(el);
   return { el, textEl };
@@ -1144,17 +1300,29 @@ function readImage(file) {
 $("#chat-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = $("#chat-input");
-  const text = input.value.trim();
   const target = chatTarget();
-  if (!text || !target || chat.ctrl) return;
+  const audio = !$("#chat-mic").hidden && voice.pending;
+  // Con solo audio, una instrucción mínima para que el modelo responda a lo que se dice.
+  const typed = input.value.trim();
+  const text = typed || (audio ? "Responde a lo que digo en el audio, en el mismo idioma." : "");
+  if (!text || !target || chat.ctrl || voice.recorder) { if (!text) input.focus(); return; }
   const model = target.model;
   const userMsg = { role: "user", content: text };
   const imgFile = !$("#chat-image-wrap").hidden && $("#chat-image").files[0];
-  if (imgFile) userMsg.images = [await readImage(imgFile)];
+  // Ollama 0.40.x ignora el campo "audio" de /api/chat; el WAV en "images" es la vía que funciona (issue 19378).
+  const media = [];
+  if (imgFile) media.push(await readImage(imgFile));
+  if (audio) media.push(audio.b64);
+  if (media.length) userMsg.images = media;
   $("#chat-image").value = "";
   input.value = "";
   chat.messages.push(userMsg);
-  chatBubble("user", text + (imgFile ? "\n[imagen: " + imgFile.name + "]" : ""));
+  const userBubble = chatBubble("user", typed + (imgFile ? (typed ? "\n" : "") + "[imagen: " + imgFile.name + "]" : ""));
+  if (audio) {
+    userBubble.el.append(h("audio", { controls: true, src: audio.url }), h("div", { class: "stats" }, audio.label));
+    voice.pending = null; // la URL queda viva para el reproductor de la burbuja
+    recStatus("");
+  }
   const { el, textEl } = chatBubble("assistant", "");
   textEl.textContent = "Cargando el modelo…";
   const sys = $("#chat-system").value.trim();
@@ -1192,6 +1360,7 @@ $("#chat-form").addEventListener("submit", async (e) => {
       }, chat.ctrl.signal);
     }
     chat.messages.push({ role: "assistant", content });
+    if ($("#chat-speak").checked && content) speak(content, el);
   } catch (err) {
     if (err.name === "AbortError") {
       el.append(h("div", { class: "stats" }, "Detenido."));

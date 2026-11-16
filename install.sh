@@ -5,6 +5,7 @@
 #   sudo ./install.sh --llama-cpp  además compila llama-quantize y llama-server (cuantizar y motor llama.cpp)
 #   sudo ./install.sh --train      además prepara PyTorch + PEFT para entrenar LoRA (incluye --llama-cpp)
 #   sudo ./install.sh --vllm       además instala vLLM en su propio entorno (motor con paralelismo de tensor)
+#   sudo ./install.sh --https      sirve el panel por HTTPS con un certificado propio (necesario para el micrófono)
 #   sudo ./install.sh --remove     desinstala el servicio (conserva datos en /var/lib/ollama-panel)
 #
 # Variables opcionales: PANEL_PORT (8080), PANEL_USER (el usuario que ejecutó sudo).
@@ -33,11 +34,12 @@ ensure_venv() {
   python3 -c "import ensurepip" >/dev/null 2>&1 || die "falta ensurepip: instala python${pyver}-venv y repite."
 }
 
-WANT_TRAIN=0; WANT_LLAMA=0; WANT_REMOVE=0; WANT_VLLM=0
+WANT_TRAIN=0; WANT_LLAMA=0; WANT_REMOVE=0; WANT_VLLM=0; WANT_HTTPS=0
 for arg in "$@"; do
   case "$arg" in
     --train) WANT_TRAIN=1; WANT_LLAMA=1 ;;
     --vllm) WANT_VLLM=1 ;;
+    --https) WANT_HTTPS=1 ;;
     --llama-cpp) WANT_LLAMA=1 ;;
     --remove) WANT_REMOVE=1 ;;
     *) die "opción desconocida: $arg" ;;
@@ -100,6 +102,28 @@ PANEL_PASSWORD=$PASS
 EOF
   chown root:"$PANEL_USER" "$ENV_FILE"
   chmod 640 "$ENV_FILE"
+fi
+
+if [ "$WANT_HTTPS" = 1 ]; then
+  CERT_DIR=/etc/ollama-panel
+  if [ ! -f "$CERT_DIR/cert.pem" ]; then
+    command -v openssl >/dev/null || die "falta openssl (sudo apt install openssl)."
+    HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    echo "== Generando un certificado propio para https://${HOST_IP:-servidor}:$PANEL_PORT (válido 10 años)"
+    mkdir -p "$CERT_DIR"
+    SAN="DNS:$(hostname),DNS:localhost,IP:127.0.0.1"
+    for ip in $(hostname -I 2>/dev/null); do case "$ip" in *:*) ;; *) SAN="$SAN,IP:$ip" ;; esac; done
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$(hostname)" \
+      -addext "subjectAltName=$SAN" -keyout "$CERT_DIR/key.pem" -out "$CERT_DIR/cert.pem" 2>/dev/null \
+      || die "openssl no pudo generar el certificado."
+    chown root:"$PANEL_USER" "$CERT_DIR/key.pem" "$CERT_DIR/cert.pem"
+    chmod 640 "$CERT_DIR/key.pem"
+    chmod 644 "$CERT_DIR/cert.pem"
+  fi
+  sed -i '/^#\? *PANEL_TLS_CERT=/d; /^#\? *PANEL_TLS_KEY=/d' "$ENV_FILE"
+  printf 'PANEL_TLS_CERT=%s\nPANEL_TLS_KEY=%s\n' "$CERT_DIR/cert.pem" "$CERT_DIR/key.pem" >> "$ENV_FILE"
+  echo "   El navegador avisará de que el certificado no es de una autoridad conocida: acéptalo una vez."
+  echo "   Para un certificado reconocido (acceso desde internet), cambia esas dos rutas por las de Let's Encrypt."
 fi
 
 if [ "$WANT_LLAMA" = 1 ]; then
@@ -180,7 +204,8 @@ systemctl --no-pager --lines=3 status ollama-panel || true
 
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo
-echo "Listo: http://${IP:-<ip-del-servidor>}:$PANEL_PORT"
+SCHEME=http; grep -q '^PANEL_TLS_CERT=' "$ENV_FILE" && SCHEME=https
+echo "Listo: $SCHEME://${IP:-<ip-del-servidor>}:$PANEL_PORT"
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
   echo "ufw está activo; para abrir el puerto en la red local: sudo ufw allow from ${IP%.*}.0/24 to any port $PANEL_PORT"
 fi
