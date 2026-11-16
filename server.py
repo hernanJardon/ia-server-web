@@ -824,7 +824,8 @@ class Updater:
                       "last_update": None, "remote": None}
 
     def git(self, *args, timeout=120):
-        r = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=timeout)
         if r.returncode != 0:
             raise RuntimeError((r.stderr or r.stdout).strip()[:400] or "git falló")
         return r.stdout.strip()
@@ -857,6 +858,7 @@ class Updater:
             branch = self.git("rev-parse", "--abbrev-ref", "HEAD")
             self.git("fetch", "--quiet", "origin", branch, timeout=60)
             behind = int(self.git("rev-list", "--count", "HEAD..origin/" + branch) or 0)
+            self.state["remote_head"] = self.git("rev-parse", "origin/" + branch)
             log = self.git("log", "--format=%h%x09%s%x09%cI", "HEAD..origin/" + branch, "-n", "30")
             dirty = bool(self.git("status", "--porcelain", "--untracked-files=no"))
         except (RuntimeError, OSError, subprocess.SubprocessError) as e:
@@ -898,6 +900,7 @@ class Updater:
             if check.returncode != 0:
                 self.git("reset", "--hard", old)
                 self.state["updating"] = False
+                self.state["bad_head"] = new  # la automática no lo reintenta hasta que llegue otro commit
                 raise ValueError("La versión nueva no compila y se ha vuelto a la anterior: " + check.stderr.strip()[:300])
         except (RuntimeError, OSError, subprocess.SubprocessError) as e:
             self.state["updating"] = False
@@ -917,7 +920,8 @@ class Updater:
             if s["auto_check"] and not self.available():
                 try:
                     self.check()
-                    if s["auto_install"] and self.state["behind"] and not self.state.get("dirty") and not self.busy():
+                    if (s["auto_install"] and self.state["behind"] and not self.state.get("dirty") and not self.busy()
+                            and self.state.get("remote_head") != self.state.get("bad_head")):
                         self.apply()
                 except ValueError:
                     pass

@@ -1426,7 +1426,7 @@ const renderJobs = () => renderJobList($("#jobs"), "train");
 /* ================================================================ copiar al portapapeles */
 
 /** navigator.clipboard solo existe en contexto seguro (HTTPS o localhost); en http://IP se usa la selección. */
-async function copyText(text, btn) {
+async function copyText(text, btn, sourceEl) {
   let ok = false;
   try {
     if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; }
@@ -1438,15 +1438,23 @@ async function copyText(text, btn) {
     try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
     ta.remove();
   }
+  if (!ok && sourceEl) {
+    // Sin permiso de portapapeles: deja el texto seleccionado para copiarlo con Ctrl+C.
+    const range = document.createRange();
+    range.selectNodeContents(sourceEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
   if (btn) {
     const prev = btn.textContent;
-    btn.textContent = ok ? "Copiado" : "Selecciona y copia a mano";
-    setTimeout(() => { btn.textContent = prev; }, 1800);
+    btn.textContent = ok ? "Copiado" : "Seleccionado: pulsa Ctrl+C";
+    setTimeout(() => { btn.textContent = prev; }, 2500);
   }
 }
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-copy]");
-  if (btn) copyText($("#" + btn.dataset.copy).textContent, btn);
+  if (btn) { const el = $("#" + btn.dataset.copy); copyText(el.textContent, btn, el); }
 });
 
 /* ================================================================ vista: acceso y API */
@@ -1533,7 +1541,7 @@ $("#key-form").addEventListener("submit", async (e) => {
     lastKey = { key: res.key, name: res.record.name, id: res.record.id };
     e.target.reset();
     await renderAccess();
-    $("#key-secret").focus();
+    $("[data-copy=key-secret]").focus();
   } catch (err) { notify(err.message, "error"); }
 });
 
@@ -1565,6 +1573,7 @@ function renderUpdate() {
     ["Estado", u.error ? h("span", { class: "bad" }, u.error) : u.behind ? h("span", { class: "warn" }, u.behind + " cambio" + (u.behind === 1 ? "" : "s") + " nuevo" + (u.behind === 1 ? "" : "s"))
       : u.checked ? h("span", { class: "ok" }, "Al día") : "Sin comprobar"],
   ];
+  if (u.bad_head && u.bad_head === u.remote_head) rows.push(["Aviso", h("span", { class: "bad" }, "La última versión de GitHub no compilaba y se descartó. Se instalará la siguiente que llegue.")]);
   if (u.dirty) rows.push(["Aviso", h("span", { class: "warn" }, "Hay cambios locales en la copia instalada: la actualización automática se salta hasta que se resuelvan.")]);
   if (!u.managed) rows.push(["Reinicio", "El panel no corre como servicio systemd: tras actualizar tendrás que reiniciarlo a mano."]);
   fill(box, h("dl", { class: "spec" }, rows.map(([k, v]) => h("div", {}, h("dt", {}, k), h("dd", {}, v)))));
