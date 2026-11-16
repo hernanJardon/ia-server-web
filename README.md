@@ -12,7 +12,7 @@ Panel web para administrar un servidor [Ollama](https://ollama.com) sin entrar p
 | **Subir GGUF** | Sube un archivo `.gguf` desde tu PC y crea el modelo en Ollama. |
 | **Cuantizar** | Recuantiza un modelo instalado a cualquier tipo de llama.cpp (Q2_K … Q8_0, IQ4_XS, F16) conservando plantilla, prompt de sistema y parámetros. |
 | **Crear variante** | Un modelo nuevo sobre los pesos de otro con su propio `SYSTEM`, parámetros y plantilla (sin ocupar disco extra). |
-| **Chat de prueba** | Conversación rápida para comprobar un modelo, con razonamiento visible e imágenes si el modelo las admite. |
+| **Chat de prueba** | Conversación rápida para comprobar un modelo, con razonamiento visible e imágenes si el modelo las admite. Con modelos de audio (como `lfm3-audio` o `lfm3-omni`) puedes **hablarle** con el micrófono o adjuntar un audio, y **escuchar** la respuesta. El micrófono necesita HTTPS (`--https`). |
 | **Entrenamiento** | Fine-tuning LoRA/QLoRA con PyTorch sobre el modelo original de Hugging Face, validación de datasets `.jsonl` y registro del adaptador en Ollama. |
 | **Registros** | `journalctl -u ollama`, con actualización automática. |
 | **Acceso y API** | Una API compatible con OpenAI en `http://IP:8080/v1` para tus apps (Open WebUI, Continue, Cline, tu código), dentro o fuera de casa. Sirve los modelos de Ollama y las instancias de los motores, y solo responde con una **clave de API** que creas y revocas desde el panel. Solo admite chat, completions y embeddings. |
@@ -29,6 +29,7 @@ sudo ./install.sh                # solo el panel
 sudo ./install.sh --llama-cpp    # + llama-quantize y llama-server: Cuantizar y el motor llama.cpp
 sudo ./install.sh --train        # + PyTorch/PEFT para Entrenamiento (incluye --llama-cpp)
 sudo ./install.sh --vllm         # + vLLM como motor (entorno propio)
+sudo ./install.sh --https        # HTTPS con certificado propio (necesario para hablar por micrófono)
 ```
 
 Las opciones se pueden combinar (`sudo ./install.sh --train --vllm`).
@@ -72,6 +73,7 @@ La copia instalada es un clon de git. Cada 6 horas el panel hace `git fetch`, y 
 - `server.py` sirve la interfaz y hace de proxy de `/api/*` de Ollama en `/ollama/*`, con streaming, de modo que el progreso de descargas y respuestas llega en directo. Cancelar en el navegador corta también la operación en Ollama.
 - La ocupación por GPU sale de `nvidia-smi`. Para saber qué modelo ocupa cada tarjeta, el panel cruza los procesos de `nvidia-smi` con el GGUF que carga cada `ollama runner`.
 - El veredicto de cabida suma pesos + caché KV (capas con atención × cabezas KV × dimensiones × contexto) × peticiones en paralelo + el estado recurrente de los modelos híbridos + búferes, y reparte entre tarjetas reservando 0,6 GiB en cada una. El contexto, el paralelismo y el tipo de caché salen de `OLLAMA_CONTEXT_LENGTH`, `OLLAMA_NUM_PARALLEL` y `OLLAMA_KV_CACHE_TYPE` del servicio de Ollama. Si no están definidas, se deducen de los modelos cargados, y la ficha indica de dónde sale cada dato. En los modelos ya cargados el panel muestra lo que mide Ollama.
+- **Voz.** El navegador graba en su formato (webm/opus) y el panel lo convierte a WAV mono de 16 kHz antes de enviarlo. En Ollama 0.40.x el audio viaja en el campo `images` de `/api/chat`, porque el campo `audio` se ignora ([ollama#19378](https://github.com/ollama/ollama/issues/19378)). La respuesta hablada se pide a `/v1/audio/speech` con un modelo que declare la capacidad `speech`; si no devuelve audio, suena la voz del navegador y el chat lo indica. El certificado de `--https` es propio: el navegador avisará la primera vez.
 - **Motores.** El panel lanza `llama-server` o `python -m vllm.entrypoints.openai.api_server` con `CUDA_VISIBLE_DEVICES` limitado a las GPU elegidas, escuchando en `0.0.0.0` (la API queda accesible en tu red, como la de Ollama). Las instancias se cierran al detener o reiniciar el panel. Ollama no deja elegir GPU por modelo, solo para todo el servidor; si una instancia comparte GPU con modelos de Ollama, compiten por la memoria. vLLM reserva de entrada la fracción de VRAM indicada en cada GPU.
 - **Cuantizar.** Las versiones recientes de Ollama (comprobado en la 0.40.16) solo cuantizan al importar safetensors. Por eso el panel lee el GGUF del almacén de Ollama, ejecuta `llama-quantize` y registra el resultado. El usuario del panel debe poder leer la carpeta de modelos; el instalador lo añade al grupo `ollama`.
 - **Entrenar.** Ollama no entrena. `training/train_lora.py` carga el modelo base de Hugging Face (en 4 bits si eliges QLoRA, repartido entre las GPU), entrena un adaptador LoRA, lo convierte a GGUF con llama.cpp y crea en Ollama un modelo nuevo: el modelo de Ollama que elijas más el adaptador. El modelo de Hugging Face y el de Ollama deben ser el mismo (por ejemplo `Qwen/Qwen2.5-7B-Instruct` y `qwen2.5:7b`).
