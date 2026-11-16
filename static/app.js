@@ -1231,29 +1231,156 @@ function splitSentences(text) {
   return out.filter((s) => /[\p{L}\p{N}]/u.test(s));
 }
 
-/** Ollama envía el WAV en streaming con tamaños 0xFFFFFFFF; se corrigen para que todos los navegadores lo reproduzcan. */
-function fixWavSizes(buf) {
-  const v = new DataView(buf);
-  if (buf.byteLength < 44 || v.getUint32(0, false) !== 0x52494646) return buf; // "RIFF"
-  v.setUint32(4, buf.byteLength - 8, true);
-  let off = 12;
-  while (off + 8 <= buf.byteLength) {
-    const id = v.getUint32(off, false);
-    if (id === 0x64617461) { v.setUint32(off + 4, buf.byteLength - off - 8, true); break; } // "data"
-    off += 8 + v.getUint32(off + 4, true);
-  }
-  return buf;
-}
+const tts = { ctrl: null, player: null, stopBtn: null, ctx: null };
 
-const tts = { ctrl: null, audio: null, stopBtn: null };
+/** AudioContext creado y reanudado dentro de un clic (enviar): así el navegador deja sonar la respuesta luego. */
+function ttsContext() {
+  if (!tts.ctx || tts.ctx.state === "closed") tts.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (tts.ctx.state === "suspended") tts.ctx.resume().catch(() => {});
+  return tts.ctx;
+}
 
 /** Corta la voz en curso: la petición a Ollama (que si no bloquearía el siguiente mensaje) y lo que suene. */
 function stopSpeech() {
   if (tts.ctrl) tts.ctrl.abort();
   tts.ctrl = null;
-  if (tts.audio) { tts.audio.pause(); tts.audio = null; }
+  if (tts.player) { tts.player.stop(); tts.player = null; }
   if (window.speechSynthesis) speechSynthesis.cancel();
   if (tts.stopBtn) { tts.stopBtn.remove(); tts.stopBtn = null; }
+}
+
+/**
+ * Reproduce PCM según llega de un WAV en streaming. Ollama genera la voz algo más lenta que el tiempo real,
+ * así que se acumula un colchón antes de empezar y, si se vacía, se vuelve a acumular uno mayor: suena seguido
+ * en vez de a saltos. Guarda todo el PCM para dejar un reproductor al final.
+ */
+class StreamingWavPlayer {
+  constructor(ctx, onState) {
+    this.ctx = ctx;
+    this.onState = onState || (() => {});
+    this.header = new Uint8Array(0);
+    this.format = null;
+    this.carry = null;
+    this.pcm = [];
+    this.queue = [];
+    this.queued = 0;      // segundos esperando a sonar
+    this.nextTime = 0;
+    this.playing = false;
+    this.cushion = 1.2;   // segundos antes de empezar o reanudar
+    this.sources = new Set();
+  }
+
+  /** Lee la cabecera RIFF hasta el bloque "data" y devuelve el resto de bytes, o null si aún falta cabecera. */
+  parseHeader(bytes) {
+    const buf = new Uint8Array(this.header.length + bytes.length);
+    buf.set(this.header); buf.set(bytes, this.header.length);
+    this.header = buf;
+    const v = new DataView(buf.buffer);
+    if (buf.length < 12) return null;
+    let off = 12, fmt = null;
+    while (off + 8 <= buf.length) {
+      const id = String.fromCharCode(...buf.subarray(off, off + 4));
+      const size = v.getUint32(off + 4, true);
+      if (id === "fmt " && off + 24 <= buf.length) fmt = { channels: v.getUint16(off + 10, true), rate: v.getUint32(off + 12, true), bits: v.getUint16(off + 22, true) };
+      if (id === "data") {
+        if (!fmt || fmt.bits !== 16) throw new Error("formato de audio no soportado");
+        this.format = fmt;
+        return buf.subarray(off + 8);
+      }
+      off += 8 + (size === 0xffffffff ? 0 : size);
+    }
+    return null;
+  }
+
+  push(bytes) {
+    if (!this.format) {
+      bytes = this.parseHeader(bytes);
+      if (!bytes) return;
+    }
+    if (this.carry) { const b = new Uint8Array(this.carry.length + bytes.length); b.set(this.carry); b.set(bytes, this.carry.length); bytes = b; this.carry = null; }
+    const usable = bytes.length - (bytes.length % (2 * this.format.channels));
+    if (usable < bytes.length) this.carry = bytes.slice(usable);
+    if (!usable) return;
+    const samples = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + usable));
+    this.pcm.push(samples);
+    const frames = samples.length / this.format.channels;
+    const ab = this.ctx.createBuffer(this.format.channels, frames, this.format.rate);
+    for (let c = 0; c < this.format.channels; c++) {
+      const ch = ab.getChannelData(c);
+      for (let i = 0; i < frames; i++) ch[i] = samples[i * this.format.channels + c] / 32768;
+    }
+    this.queue.push(ab);
+    this.queued += ab.duration;
+    this.pump(false);
+  }
+
+  pump(final) {
+    const now = this.ctx.currentTime;
+    if (this.playing && this.nextTime < now - 0.05) {
+      // Se vació el colchón: pausa breve y uno algo mayor para la próxima vez.
+      this.playing = false;
+      this.cushion = Math.min(4, this.cushion + 0.8);
+      this.onState("buffering");
+    }
+    if (!this.playing && (this.queued >= this.cushion || (final && this.queued > 0))) {
+      this.playing = true;
+      this.nextTime = Math.max(now + 0.05, this.nextTime);
+      this.onState("playing");
+    }
+    if (!this.playing) return;
+    while (this.queue.length) {
+      const ab = this.queue.shift();
+      this.queued -= ab.duration;
+      const src = this.ctx.createBufferSource();
+      src.buffer = ab;
+      src.connect(this.ctx.destination);
+      src.onended = () => this.sources.delete(src);
+      src.start(this.nextTime);
+      this.sources.add(src);
+      this.nextTime += ab.duration;
+    }
+  }
+
+  /** Se acabó un WAV: lo que quede en cola suena aunque no llegue al colchón. */
+  flush() {
+    this.pump(true);
+    if (this.format) this.lastFormat = this.format;
+    this.header = new Uint8Array(0); // el siguiente trozo trae su propia cabecera
+    this.format = null;
+    this.carry = null;
+  }
+
+  /** Promesa que se cumple cuando termina de sonar lo programado. */
+  finished() {
+    return new Promise((resolve) => {
+      const check = () => (this.stopped || (!this.queue.length && this.ctx.currentTime >= this.nextTime - 0.02) ? resolve() : setTimeout(check, 150));
+      check();
+    });
+  }
+
+  stop() {
+    this.stopped = true;
+    for (const s of this.sources) { try { s.stop(); } catch (e) { /* ya parado */ } }
+    this.sources.clear();
+    this.queue = [];
+  }
+
+  /** WAV con todo lo recibido, para volver a escucharlo. */
+  toWav() {
+    const fmt = this.lastFormat || this.format;
+    if (!fmt) return null;
+    const n = this.pcm.reduce((s, a) => s + a.length, 0);
+    const buf = new ArrayBuffer(44 + n * 2);
+    const v = new DataView(buf);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE"); str(12, "fmt "); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, fmt.channels, true); v.setUint32(24, fmt.rate, true);
+    v.setUint32(28, fmt.rate * fmt.channels * 2, true); v.setUint16(32, fmt.channels * 2, true); v.setUint16(34, 16, true);
+    str(36, "data"); v.setUint32(40, n * 2, true);
+    let off = 44;
+    for (const a of this.pcm) { new Int16Array(buf, off, a.length).set(a); off += a.length * 2; }
+    return new Blob([buf], { type: "audio/wav" });
+  }
 }
 
 function browserSpeak(input) {
@@ -1268,7 +1395,7 @@ function browserSpeak(input) {
 }
 
 /**
- * Voz con /v1/audio/speech de Ollama, frase a frase: genera la siguiente mientras suena la actual.
+ * Voz con /v1/audio/speech de Ollama, reproducida en streaming según llega (por trozos de texto, en orden).
  * Si el modelo no genera voz, voz del navegador, y se dice cuál sonó.
  */
 async function speak(text, bubble) {
@@ -1284,42 +1411,40 @@ async function speak(text, bubble) {
   const done = (msg) => { note.textContent = msg; if (tts.ctrl === ctrl) { tts.ctrl = null; if (tts.stopBtn) { tts.stopBtn.remove(); tts.stopBtn = null; } } };
   if (!model) { done(browserSpeak(input) ? "Voz del navegador" : "Este navegador no tiene síntesis de voz."); return; }
 
-  const sentences = splitSentences(input);
-  const fetchOne = async (s) => {
-    const res = await fetch("/ollama-v1/audio/speech", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, input: s, voice: "default", response_format: "wav" }), signal: ctrl.signal });
-    const type = res.headers.get("Content-Type") || "";
-    if (res.ok && type.startsWith("audio")) return new Blob([fixWavSizes(await res.arrayBuffer())], { type: "audio/wav" });
-    const body = await res.text();
-    let msg = body;
-    try { const j = JSON.parse(body); msg = (j.error && (j.error.message || j.error)) || body; } catch (e) { /* texto */ }
-    throw new Error(String(msg).slice(0, 140));
-  };
-  const playBlob = (blob) => new Promise((resolve) => {
-    const a = new Audio(URL.createObjectURL(blob));
-    tts.audio = a;
-    a.onended = a.onerror = () => resolve();
-    a.play().catch(() => resolve());
-  });
-
-  const blobs = [];
+  // Trozos en orden: Ollama atiende una petición por modelo, así que se piden seguidos y se encadenan en un solo
+  // reproductor; dentro de cada trozo el audio suena según llega.
+  const pieces = splitSentences(input);
   const t0 = performance.now();
+  let firstSound = null;
+  const player = new StreamingWavPlayer(ttsContext(), (st) => {
+    if (st === "playing" && firstSound == null) firstSound = (performance.now() - t0) / 1000;
+    note.textContent = st === "playing" ? "Reproduciendo…" : "Acumulando audio (el servidor genera la voz algo más lenta que el tiempo real)…";
+  });
+  tts.player = player;
   try {
-    let next = fetchOne(sentences[0]);
-    for (let i = 0; i < sentences.length; i++) {
-      note.textContent = "Generando voz" + (sentences.length > 1 ? " (frase " + (i + 1) + " de " + sentences.length + ")" : "") + "…";
-      const blob = await next;
-      blobs.push(blob);
-      next = i + 1 < sentences.length ? fetchOne(sentences[i + 1]) : null; // se genera mientras suena esta
-      if (next) next.catch(() => { /* el error se recoge al esperarla */ });
-      if (ctrl.signal.aborted) return;
-      note.textContent = "Reproduciendo" + (sentences.length > 1 ? " frase " + (i + 1) + " de " + sentences.length : "") + "…";
-      await playBlob(blob);
-      if (ctrl.signal.aborted) return;
+    for (const piece of pieces) {
+      const res = await fetch("/ollama-v1/audio/speech", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, input: piece, voice: "default", response_format: "wav" }), signal: ctrl.signal });
+      const type = res.headers.get("Content-Type") || "";
+      if (!res.ok || !type.startsWith("audio")) {
+        const body = await res.text();
+        let msg = body;
+        try { const j = JSON.parse(body); msg = (j.error && (j.error.message || j.error)) || body; } catch (e) { /* texto */ }
+        throw new Error(String(msg).slice(0, 140));
+      }
+      const reader = res.body.getReader();
+      for (;;) {
+        const { value, done: end } = await reader.read();
+        if (end) break;
+        player.push(value);
+      }
+      player.flush();
     }
-    // Al final quedan los reproductores para volver a escucharla (uno por frase).
-    note.before(h("div", {}, blobs.map((b) => h("audio", { controls: true, src: URL.createObjectURL(b) }))));
-    done("Voz de " + model + " · " + ((performance.now() - t0) / 1000).toFixed(1).replace(".", ",") + " s");
+    await player.finished();
+    if (ctrl.signal.aborted || player.stopped) return;
+    const wav = player.toWav();
+    if (wav) note.before(h("audio", { controls: true, src: URL.createObjectURL(wav) }));
+    done("Voz de " + model + (firstSound != null ? " · empezó a sonar a los " + firstSound.toFixed(1).replace(".", ",") + " s" : ""));
   } catch (e) {
     if (e.name === "AbortError") { done("Voz detenida."); return; }
     done(model + " no generó voz (" + e.message + "). Uso la voz del navegador.");
@@ -1397,6 +1522,7 @@ $("#chat-form").addEventListener("submit", async (e) => {
   const text = typed || (audio ? "Responde a lo que digo en el audio, en el mismo idioma." : "");
   if (!text || !target || chat.ctrl || voice.recorder) { if (!text) input.focus(); return; }
   stopSpeech(); // una voz aún generándose ocuparía el modelo y este mensaje esperaría detrás
+  if ($("#chat-speak").checked && $("#chat-tts-model").value) ttsContext(); // dentro del clic: permiso para sonar después
   const model = target.model;
   const userMsg = { role: "user", content: text };
   const imgFile = !$("#chat-image-wrap").hidden && $("#chat-image").files[0];
