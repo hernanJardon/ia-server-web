@@ -28,6 +28,8 @@
     <a href="#chat">Chat de prueba</a>
     <a href="#entrenamiento">Entrenamiento <span class="count" id="nav-count-jobs"></span></a>
     <a href="#registros">Registros</a>
+    <a href="#acceso">Acceso y API</a>
+    <a href="#actualizar">Actualizaciones <span class="count" id="nav-count-update"></span></a>
   </nav>
   <div class="rail-foot">
     <div id="server-line">Conectando con Ollama…</div>
@@ -331,6 +333,70 @@
       </div>
       <p class="error-text" id="log-error" hidden></p>
       <pre class="log" id="log-out" tabindex="0">Cargando…</pre>
+    </div>
+  </section>
+
+  <!-- ===================================================== ACCESO -->
+  <section data-view="acceso" hidden aria-labelledby="t-acceso">
+    <h2 id="t-acceso">Acceso y API</h2>
+    <p class="lede">Una sola API compatible con OpenAI para tus apps, dentro o fuera de casa: sirve los modelos de Ollama y las instancias de los motores, y solo responde a quien tenga una clave. Solo permite chatear, completar y calcular embeddings; no deja borrar ni descargar modelos.</p>
+    <div id="access-warnings"></div>
+
+    <div class="block" aria-labelledby="t-keys">
+      <h3 id="t-keys">Claves de API</h3>
+      <form id="key-form" class="actions" style="margin-top:0">
+        <label style="flex:1 1 280px">Nombre (la app o el equipo que la usará)
+          <input name="name" required maxlength="60" placeholder="Open WebUI del portátil" autocomplete="off">
+        </label>
+        <button type="submit" class="primary">Crear clave</button>
+      </form>
+      <div id="key-new"></div>
+      <div id="keys"><div class="skeleton w60"></div></div>
+    </div>
+
+    <div class="block" aria-labelledby="t-endpoints">
+      <h3 id="t-endpoints">Direcciones</h3>
+      <div id="endpoints"></div>
+    </div>
+
+    <div class="block" aria-labelledby="t-example">
+      <h3 id="t-example">Cómo conectarse</h3>
+      <div class="form">
+        <label>Modelo para el ejemplo <select id="example-model"></select></label>
+      </div>
+      <h4 style="margin-top:14px">curl</h4>
+      <div class="copy-row"><pre id="example-curl"></pre><button type="button" class="quiet" data-copy="example-curl">Copiar</button></div>
+      <h4 style="margin-top:14px">Python (paquete openai)</h4>
+      <div class="copy-row"><pre id="example-py"></pre><button type="button" class="quiet" data-copy="example-py">Copiar</button></div>
+      <p class="note">En apps como Open WebUI, Continue o Cline: tipo de proveedor «OpenAI compatible», la dirección de la API y la clave.</p>
+    </div>
+
+    <div class="block" aria-labelledby="t-outside">
+      <h3 id="t-outside">Conectarse desde fuera de casa</h3>
+      <dl class="spec spec-text">
+        <div><dt>Recomendado: VPN</dt><dd>Instala <a href="https://tailscale.com/download" rel="noopener">Tailscale</a> en el servidor y en tus equipos. No abres ningún puerto en el router y usas la misma dirección del panel con la IP de Tailscale.</dd></div>
+        <div><dt>Abriendo un puerto</dt><dd>Redirige en el router un puerto externo al 8080 del servidor y activa HTTPS (PANEL_TLS_CERT y PANEL_TLS_KEY en /etc/ollama-panel.env, por ejemplo con un certificado de Let's Encrypt). Sin HTTPS, las claves y la contraseña viajan en claro por internet.</dd></div>
+        <div><dt>Intentos fallidos</dt><dd>Tras 20 intentos fallidos de clave o contraseña en 10 minutos, el panel bloquea esa dirección durante 10 minutos.</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <!-- ===================================================== ACTUALIZACIONES -->
+  <section data-view="actualizar" hidden aria-labelledby="t-update">
+    <h2 id="t-update">Actualizaciones</h2>
+    <p class="lede">El panel se actualiza desde su repositorio de GitHub. Antes de reiniciarse comprueba que la versión nueva compila y, si no, vuelve a la anterior. Las actualizaciones automáticas solo se instalan cuando no hay entrenamientos, cuantizaciones, motores ni descargas en marcha.</p>
+    <div class="block">
+      <div id="update-info"><div class="skeleton w60"></div></div>
+      <div class="actions">
+        <button type="button" id="update-check">Buscar actualizaciones</button>
+        <button type="button" class="primary" id="update-apply" hidden>Actualizar ahora</button>
+      </div>
+      <div id="update-log"></div>
+    </div>
+    <div class="block" aria-labelledby="t-update-auto">
+      <h3 id="t-update-auto">Automático</h3>
+      <label class="check"><input type="checkbox" id="set-auto-check"> Buscar actualizaciones cada 6 horas</label>
+      <label class="check" style="margin-top:8px"><input type="checkbox" id="set-auto-install"> Instalarlas solas cuando el servidor esté libre</label>
     </div>
   </section>
 </main>

@@ -10,6 +10,8 @@ Solo usa la biblioteca estándar (Python 3.8+). Configuración por variables de 
   PANEL_DATA      carpeta de datos del panel      (por defecto ./data)
   TRAIN_PYTHON    intérprete con torch/peft       (por defecto ./data/venv/bin/python o el actual)
   LLAMA_CPP_DIR   clon de llama.cpp, para convertir adaptadores LoRA a GGUF (opcional)
+  PANEL_TLS_CERT  certificado PEM: si se define junto a PANEL_TLS_KEY, el panel sirve HTTPS
+  PANEL_TLS_KEY   clave privada PEM del certificado
 """
 import base64
 import hashlib
@@ -19,7 +21,9 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -39,6 +43,8 @@ PORT = int(os.environ.get("PANEL_PORT", "8080"))
 PASSWORD = os.environ.get("PANEL_PASSWORD", "")
 DATA = os.path.abspath(os.environ.get("PANEL_DATA", os.path.join(ROOT, "data")))
 LLAMA_CPP_DIR = os.environ.get("LLAMA_CPP_DIR", "")
+TLS_CERT = os.environ.get("PANEL_TLS_CERT", "")
+TLS_KEY = os.environ.get("PANEL_TLS_KEY", "")
 UPLOADS = os.path.join(DATA, "uploads")
 DATASETS = os.path.join(DATA, "datasets")
 JOBS = os.path.join(DATA, "jobs")
@@ -128,7 +134,7 @@ def system_info():
 
 
 _ollama_env_cache = {"at": 0, "value": None}
-OLLAMA_ENV_KEYS = ("OLLAMA_NUM_PARALLEL", "OLLAMA_CONTEXT_LENGTH", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_FLASH_ATTENTION",
+OLLAMA_ENV_KEYS = ("OLLAMA_HOST", "OLLAMA_NUM_PARALLEL", "OLLAMA_CONTEXT_LENGTH", "OLLAMA_KV_CACHE_TYPE", "OLLAMA_FLASH_ATTENTION",
                    "OLLAMA_KEEP_ALIVE", "OLLAMA_MAX_LOADED_MODELS", "OLLAMA_SCHED_SPREAD", "CUDA_VISIBLE_DEVICES")
 
 
@@ -616,6 +622,14 @@ class EngineManager:
             data = f.read(512 * 1024)
         return {"text": data.decode("utf-8", "replace"), "offset": offset + len(data)}
 
+    def by_alias(self, alias):
+        with self.lock:
+            for inst in self.instances.values():
+                self._refresh(inst)
+                if inst["alias"] == alias and inst["status"] == "ready":
+                    return dict(self.public(inst))
+        return None
+
     def port_of(self, inst_id):
         inst = self.instances.get(inst_id)
         if not inst or inst["status"] not in ("loading", "ready"):
@@ -686,6 +700,233 @@ def parse_train_request(body):
     }
 
 
+# ---------------------------------------------------------------- ajustes, claves de API y límite de intentos
+
+SETTINGS_PATH = os.path.join(DATA, "settings.json")
+SETTINGS_DEFAULTS = {"auto_check": True, "auto_install": True}
+_settings_lock = threading.Lock()
+
+
+def load_settings():
+    try:
+        with open(SETTINGS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    return {k: bool(data.get(k, v)) for k, v in SETTINGS_DEFAULTS.items()}
+
+
+def save_settings(patch):
+    with _settings_lock:
+        cur = load_settings()
+        for k in SETTINGS_DEFAULTS:
+            if k in patch:
+                cur[k] = bool(patch[k])
+        tmp = SETTINGS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cur, f)
+        os.replace(tmp, SETTINGS_PATH)
+        return cur
+
+
+class KeyStore:
+    """Claves de la API /v1. Se guarda solo el SHA-256; la clave se muestra una vez al crearla."""
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        self.dirty_at = 0.0
+        try:
+            with open(path, encoding="utf-8") as f:
+                self.keys = json.load(f)
+        except (OSError, ValueError):
+            self.keys = []
+
+    def _save(self):
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(self.keys, f, indent=1)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.path)
+
+    def public(self):
+        with self.lock:
+            return [{k: v for k, v in rec.items() if k != "hash"} for rec in self.keys]
+
+    def create(self, name):
+        name = str(name or "").strip()[:60]
+        if not name:
+            raise ValueError("Pon un nombre a la clave (por ejemplo, el de la app que la usará).")
+        secret = "sk-op-" + secrets.token_urlsafe(32)
+        rec = {"id": uuid.uuid4().hex[:8], "name": name, "hash": hashlib.sha256(secret.encode()).hexdigest(),
+               "hint": secret[-4:], "created": time.time(), "last_used": None, "requests": 0}
+        with self.lock:
+            self.keys.append(rec)
+            self._save()
+        return secret, {k: v for k, v in rec.items() if k != "hash"}
+
+    def revoke(self, key_id):
+        with self.lock:
+            before = len(self.keys)
+            self.keys = [k for k in self.keys if k["id"] != key_id]
+            if len(self.keys) == before:
+                raise FileNotFoundError(key_id)
+            self._save()
+
+    def verify(self, secret):
+        digest = hashlib.sha256(secret.encode()).hexdigest()
+        with self.lock:
+            for rec in self.keys:
+                if hmac.compare_digest(rec["hash"], digest):
+                    rec["last_used"] = time.time()
+                    rec["requests"] += 1
+                    if time.time() - self.dirty_at > 30:  # no escribir el archivo en cada petición
+                        self.dirty_at = time.time()
+                        self._save()
+                    return rec
+        return None
+
+
+class AuthLimiter:
+    """Bloquea una IP 10 minutos tras 20 intentos fallidos de contraseña o de clave."""
+    WINDOW, LIMIT = 600, 20
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.fails = {}
+
+    def blocked(self, ip):
+        with self.lock:
+            recent = [t for t in self.fails.get(ip, []) if time.time() - t < self.WINDOW]
+            self.fails[ip] = recent
+            return len(recent) >= self.LIMIT
+
+    def fail(self, ip):
+        with self.lock:
+            self.fails.setdefault(ip, []).append(time.time())
+
+
+keys = KeyStore(os.path.join(DATA, "api_keys.json"))
+limiter = AuthLimiter()
+active_streams = [0]  # descargas, chats y creaciones en curso a través del proxy
+_streams_lock = threading.Lock()
+
+
+# ---------------------------------------------------------------- actualización desde GitHub
+
+class Updater:
+    """La app instalada es un clon de git: comprobar = fetch, actualizar = pull --ff-only y reiniciar el servicio."""
+    INTERVAL = 6 * 3600
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.state = {"checked": None, "behind": 0, "log": [], "error": None, "updating": False,
+                      "last_update": None, "remote": None}
+
+    def git(self, *args, timeout=120):
+        r = subprocess.run(["git", "-C", ROOT] + list(args), capture_output=True, text=True, timeout=timeout)
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or r.stdout).strip()[:400] or "git falló")
+        return r.stdout.strip()
+
+    def available(self):
+        if not shutil.which("git"):
+            return "Falta git en el servidor."
+        if not os.path.isdir(os.path.join(ROOT, ".git")):
+            return "Esta copia del panel no es un clon de git. Reinstala con la versión actual de install.sh."
+        return None
+
+    def info(self):
+        out = dict(self.state, settings=load_settings(), managed=bool(os.environ.get("INVOCATION_ID")))
+        reason = self.available()
+        out["unavailable"] = reason
+        if not reason:
+            try:
+                out["current"] = self.git("log", "-1", "--format=%h%x09%s%x09%cI")
+                out["branch"] = self.git("rev-parse", "--abbrev-ref", "HEAD")
+                out["remote"] = self.git("remote", "get-url", "origin")
+            except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+                out["unavailable"] = str(e)
+        return out
+
+    def check(self):
+        reason = self.available()
+        if reason:
+            raise ValueError(reason)
+        try:
+            branch = self.git("rev-parse", "--abbrev-ref", "HEAD")
+            self.git("fetch", "--quiet", "origin", branch, timeout=60)
+            behind = int(self.git("rev-list", "--count", "HEAD..origin/" + branch) or 0)
+            log = self.git("log", "--format=%h%x09%s%x09%cI", "HEAD..origin/" + branch, "-n", "30")
+            dirty = bool(self.git("status", "--porcelain", "--untracked-files=no"))
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            self.state.update(checked=time.time(), error="No se pudo consultar GitHub: %s" % e)
+            raise ValueError(self.state["error"])
+        self.state.update(checked=time.time(), error=None, behind=behind, dirty=dirty,
+                          log=[dict(zip(("hash", "subject", "date"), l.split("\t", 2))) for l in log.splitlines() if l])
+        return self.info()
+
+    def busy(self):
+        reasons = []
+        if jobs.procs:
+            reasons.append("hay un entrenamiento o una cuantización en curso")
+        if any(e["status"] in ("loading", "ready") for e in engines.list()):
+            reasons.append("hay instancias de motores en marcha (se cerrarían)")
+        if active_streams[0] > 0:
+            reasons.append("hay descargas o respuestas en curso")
+        return reasons
+
+    def apply(self, force=False):
+        with self.lock:
+            if self.state["updating"]:
+                raise ValueError("Ya se está actualizando.")
+            reasons = self.busy()
+            if reasons and not force:
+                raise ValueError("Ahora no: " + "; ".join(reasons) + ".")
+            self.state["updating"] = True
+        try:
+            old = self.git("rev-parse", "HEAD")
+            branch = self.git("rev-parse", "--abbrev-ref", "HEAD")
+            self.git("pull", "--ff-only", "--quiet", "origin", branch, timeout=120)
+            new = self.git("rev-parse", "HEAD")
+            if new == old:
+                self.state.update(updating=False, behind=0, log=[])
+                return {"updated": False, "message": "Ya estaba al día."}
+            check = subprocess.run([sys.executable, "-m", "py_compile", os.path.join(ROOT, "server.py"),
+                                    os.path.join(ROOT, "training", "train_lora.py"), os.path.join(ROOT, "training", "quantize_gguf.py")],
+                                   capture_output=True, text=True, timeout=60)
+            if check.returncode != 0:
+                self.git("reset", "--hard", old)
+                self.state["updating"] = False
+                raise ValueError("La versión nueva no compila y se ha vuelto a la anterior: " + check.stderr.strip()[:300])
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            self.state["updating"] = False
+            raise ValueError("No se pudo actualizar: %s" % e)
+        self.state.update(last_update=time.time(), behind=0, log=[])
+        if os.environ.get("INVOCATION_ID"):
+            # systemd (Restart=on-failure) vuelve a arrancar el panel con el código nuevo.
+            threading.Timer(1.5, lambda: os._exit(3)).start()
+            return {"updated": True, "restarting": True, "message": "Actualizado a %s. El panel se reinicia." % new[:7]}
+        self.state["updating"] = False
+        return {"updated": True, "restarting": False, "message": "Actualizado a %s. Reinicia el panel para usarlo." % new[:7]}
+
+    def loop(self):
+        time.sleep(120)
+        while True:
+            s = load_settings()
+            if s["auto_check"] and not self.available():
+                try:
+                    self.check()
+                    if s["auto_install"] and self.state["behind"] and not self.state.get("dirty") and not self.busy():
+                        self.apply()
+                except ValueError:
+                    pass
+            time.sleep(self.INTERVAL)
+
+
+updater = Updater()
+
+
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
@@ -751,6 +992,10 @@ class Handler(BaseHTTPRequestHandler):
     def authorized(self):
         if not PASSWORD:
             return True
+        ip = self.client_address[0]
+        if limiter.blocked(ip):
+            self.fail(429, "Demasiados intentos fallidos desde esta dirección. Espera unos minutos.")
+            return False
         header = self.headers.get("Authorization", "")
         if header.startswith("Basic "):
             try:
@@ -759,6 +1004,7 @@ class Handler(BaseHTTPRequestHandler):
                 given = ""
             if hmac.compare_digest(given.encode(), PASSWORD.encode()):
                 return True
+            limiter.fail(ip)
         self.send_response(401)
         self.send_header("WWW-Authenticate", 'Basic realm="Panel Ollama", charset="UTF-8"')
         self.send_header("Content-Length", "0")
@@ -790,8 +1036,23 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     self.close_connection = True
 
+    def end_headers(self):
+        # La API /v1 se autentica con clave (sin cookies), así que puede atender a apps web de cualquier origen.
+        if self.path.startswith("/v1/"):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(204 if self.path.startswith("/v1/") else 405)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def dispatch(self):
         try:
+            if self.path.startswith("/v1/"):
+                return self.gateway()
             if not self.authorized():
                 return
             if self.command not in ("GET", "HEAD") and not self.same_origin():
@@ -828,6 +1089,69 @@ class Handler(BaseHTTPRequestHandler):
 
     do_GET = do_POST = do_DELETE = do_HEAD = do_PUT = handle_request
 
+    # -- API compatible con OpenAI para apps externas, protegida con claves
+
+    def oai_error(self, code, message, kind, bearer=False):
+        data = json.dumps({"error": {"message": message, "type": kind, "code": kind}}, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        if bearer:
+            self.send_header("WWW-Authenticate", 'Bearer realm="Panel Ollama"')
+        self.send_header("Connection", "close")
+        self.close_connection = True
+        self.end_headers()
+        self.wfile.write(data)
+
+    def gateway(self):
+        ip = self.client_address[0]
+        if limiter.blocked(ip):
+            return self.oai_error(429, "Demasiados intentos fallidos desde esta dirección. Espera unos minutos.", "rate_limited")
+        auth = self.headers.get("Authorization", "")
+        secret = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+        if not secret or not keys.verify(secret):
+            limiter.fail(ip)
+            return self.oai_error(401, "Falta una clave de API válida (cabecera Authorization: Bearer sk-op-...).", "invalid_api_key", bearer=True)
+        url = urlsplit(self.path)
+        rest = unquote(url.path)[len("/v1/"):]
+        if rest == "models" and self.command == "GET":
+            return self.send_json(200, {"object": "list", "data": self.gateway_models()})
+        if rest not in ("chat/completions", "completions", "embeddings") or self.command != "POST":
+            return self.oai_error(404, "Esta API solo admite /v1/models, /v1/chat/completions, /v1/completions y /v1/embeddings.", "not_found")
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_JSON_BODY:
+            return self.oai_error(413, "Petición demasiado grande.", "request_too_large")
+        self.body_read = True
+        raw = self.rfile.read(length) if length else b""
+        try:
+            model = str(json.loads(raw.decode("utf-8") or "{}").get("model", ""))
+        except (ValueError, AttributeError):
+            return self.oai_error(400, "El cuerpo debe ser JSON con el campo model.", "invalid_request_error")
+        if not model:
+            return self.oai_error(400, "Falta el campo model.", "invalid_request_error")
+        inst = engines.by_alias(model)
+        if inst:  # un motor del panel tiene prioridad sobre un modelo de Ollama con el mismo nombre
+            conn = http.client.HTTPConnection("127.0.0.1", inst["port"], timeout=3600)
+            return self.proxy(rest, url.query, conn=conn, prefix="/v1/", label="%s en el puerto %d" % (inst["engine"], inst["port"]), body=raw)
+        return self.proxy(rest, url.query, prefix="/v1/", body=raw)
+
+    def gateway_models(self):
+        out = []
+        conn = upstream(timeout=15)
+        try:
+            conn.request("GET", "/v1/models")
+            resp = conn.getresponse()
+            if resp.status == 200:
+                out = json.loads(resp.read().decode("utf-8")).get("data", [])
+        except (OSError, ValueError):
+            pass
+        finally:
+            conn.close()
+        for inst in engines.list():
+            if inst["status"] == "ready":
+                out.insert(0, {"id": inst["alias"], "object": "model", "created": int(inst["started"]), "owned_by": inst["engine"]})
+        return out
+
     def static(self, path):
         rel = "index.html" if path in ("", "/") else path.lstrip("/")
         full = os.path.realpath(os.path.join(STATIC, rel))
@@ -848,12 +1172,22 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- proxy transparente hacia la API de Ollama (con streaming)
 
-    def proxy(self, rest, query, conn=None, prefix="/api/", label=None):
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_JSON_BODY:
-            return self.fail(413, "Cuerpo demasiado grande.")
-        self.body_read = True
-        body = self.rfile.read(length) if length else None
+    def proxy(self, rest, query, conn=None, prefix="/api/", label=None, body=None):
+        if body is None:
+            length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_JSON_BODY:
+                return self.fail(413, "Cuerpo demasiado grande.")
+            self.body_read = True
+            body = self.rfile.read(length) if length else None
+        with _streams_lock:
+            active_streams[0] += 1
+        try:
+            return self._proxy(rest, query, conn, prefix, label, body)
+        finally:
+            with _streams_lock:
+                active_streams[0] -= 1
+
+    def _proxy(self, rest, query, conn, prefix, label, body):
         headers = {"Content-Type": self.headers.get("Content-Type", "application/json")} if body else {}
         conn = conn or upstream()
         try:
@@ -909,6 +1243,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, quantize_env())
         if rest == "quantize" and m == "POST":
             return self.send_json(200, jobs.start(parse_quantize_request(self.read_json()), kind="quantize"))
+        if rest == "access" and m == "GET":
+            env = ollama_service_env() or {}
+            return self.send_json(200, {"keys": keys.public(), "password_set": bool(PASSWORD), "tls": bool(TLS_CERT),
+                                        "port": PORT, "ollama_host": env.get("OLLAMA_HOST"), "ollama_env_known": bool(env),
+                                        "same_host": SAME_HOST})
+        if rest == "keys" and m == "POST":
+            secret, rec = keys.create(self.read_json().get("name"))
+            return self.send_json(200, {"key": secret, "record": rec})
+        km = re.match(r"^keys/([0-9a-f]{8})$", rest)
+        if km and m == "DELETE":
+            keys.revoke(km.group(1))
+            return self.send_json(200, {"ok": True})
+        if rest == "update" and m == "GET":
+            return self.send_json(200, updater.info())
+        if rest == "update/check" and m == "POST":
+            return self.send_json(200, updater.check())
+        if rest == "update/apply" and m == "POST":
+            return self.send_json(200, updater.apply(force=bool(self.read_json().get("force"))))
+        if rest == "settings" and m == "POST":
+            return self.send_json(200, save_settings(self.read_json()))
         if rest == "engines/env" and m == "GET":
             return self.send_json(200, engine_env())
         if rest == "engines":
@@ -1044,17 +1398,30 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
+def make_server():
+    srv = Server((HOST, PORT), Handler)
+    if TLS_CERT and TLS_KEY:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+        # El saludo TLS se hace en el hilo de cada conexión, no en el que acepta: un cliente lento no bloquea al resto.
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True, do_handshake_on_connect=False)
+    return srv
+
+
 if __name__ == "__main__":
-    print("Panel Ollama en http://%s:%d  ->  %s%s" % (
-        HOST, PORT, OLLAMA_URL, "  (con contraseña)" if PASSWORD else "  (SIN contraseña)"), flush=True)
+    print("Panel Ollama en %s://%s:%d  ->  %s%s" % (
+        "https" if TLS_CERT and TLS_KEY else "http", HOST, PORT, OLLAMA_URL,
+        "  (con contraseña)" if PASSWORD else "  (SIN contraseña)"), flush=True)
     import signal
 
     def on_sigterm(*_):
         raise KeyboardInterrupt  # systemctl stop: sale del bucle y cierra las instancias de llama-server
 
     signal.signal(signal.SIGTERM, on_sigterm)
+    threading.Thread(target=updater.loop, daemon=True).start()
     try:
-        Server((HOST, PORT), Handler).serve_forever()
+        make_server().serve_forever()
     except KeyboardInterrupt:
         pass
     finally:

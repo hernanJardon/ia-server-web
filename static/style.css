@@ -234,6 +234,19 @@ summary:hover { color: var(--ink); }
 .engine-env { margin-top: 12px; }
 .engine-env p { margin: 0; }
 
+/* ---------- acceso: claves, direcciones y ejemplos copiables */
+.copy-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.copy-row pre { margin: 0; }
+.key-once { border: 1px solid var(--line-strong); border-radius: var(--r); padding: 12px 14px; margin: 12px 0; background: var(--sunken); }
+.key-once code { font-size: 0.9375rem; word-break: break-all; background: none; padding: 0; }
+.spec-text div { display: grid; grid-template-columns: minmax(140px, 220px) minmax(0, 1fr); gap: 16px; }
+.spec-text dd { text-align: left; max-width: 72ch; }
+.alert { border: 1px solid var(--bad); color: var(--bad); background: var(--bad-ground); border-radius: var(--r); padding: 10px 12px; margin: 0 0 14px; max-width: none; }
+.alert.warn { border-color: var(--warn); color: var(--warn); background: var(--surface); }
+.update-log { list-style: none; padding: 0; margin: 14px 0 0; }
+.update-log li { display: grid; grid-template-columns: 80px minmax(0, 1fr) auto; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.update-log code { background: none; padding: 0; }
+
 /* ---------- operaciones */
 #ops { margin-bottom: 14px; }
 .op { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
@@ -297,6 +310,10 @@ dialog h3 { margin-top: 0; }
   table.stack tr.detail { border-bottom: 0; padding: 0; }
   table.stack tr.detail td { display: block; }
   .ficha-grid { grid-template-columns: 1fr; }
+  .spec-text div { grid-template-columns: 1fr; gap: 2px; }
+  .copy-row { grid-template-columns: 1fr; }
+  .update-log li { grid-template-columns: 64px minmax(0, 1fr); }
+  .update-log li > :last-child { grid-column: 2; }
   .load-panel { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 14px; }
   .seg span { padding: 12px 14px; }
   .op { grid-template-columns: 1fr; }

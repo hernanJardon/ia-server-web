@@ -1423,6 +1423,206 @@ async function renderJobList(box, kind) {
 }
 const renderJobs = () => renderJobList($("#jobs"), "train");
 
+/* ================================================================ copiar al portapapeles */
+
+/** navigator.clipboard solo existe en contexto seguro (HTTPS o localhost); en http://IP se usa la selección. */
+async function copyText(text, btn) {
+  let ok = false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); ok = true; }
+  } catch (e) { ok = false; }
+  if (!ok) {
+    const ta = h("textarea", { style: "position:fixed;opacity:0;top:0;left:0" }, text);
+    document.body.append(ta);
+    ta.select();
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove();
+  }
+  if (btn) {
+    const prev = btn.textContent;
+    btn.textContent = ok ? "Copiado" : "Selecciona y copia a mano";
+    setTimeout(() => { btn.textContent = prev; }, 1800);
+  }
+}
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-copy]");
+  if (btn) copyText($("#" + btn.dataset.copy).textContent, btn);
+});
+
+/* ================================================================ vista: acceso y API */
+
+let accessInfo = null;
+let lastKey = null; // la clave recién creada, solo en memoria de esta página
+
+function apiBase() { return location.protocol + "//" + location.host + "/v1"; }
+
+async function renderAccess() {
+  try { accessInfo = await api("/panel/access"); }
+  catch (e) { fill($("#keys"), h("p", { class: "error-text" }, e.message)); return; }
+  const a = accessInfo;
+  const warnings = [];
+  if (!a.password_set) warnings.push(h("p", { class: "alert" }, "El panel no tiene contraseña: quien llegue a esta dirección puede borrar modelos y crear claves. Defínela en PANEL_PASSWORD (/etc/ollama-panel.env) antes de abrirlo a internet."));
+  if (!a.tls && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") warnings.push(h("p", { class: "alert warn" }, "El panel va por HTTP. En tu red local es aceptable; para conectarte desde fuera usa una VPN o activa HTTPS (abajo se explica cómo)."));
+  const oh = a.ollama_host || "";
+  if (!a.ollama_env_known) warnings.push(h("p", { class: "alert warn" }, "No se pudo leer la configuración del servicio de Ollama. Si OLLAMA_HOST es 0.0.0.0, el puerto 11434 sigue abierto en la red sin clave."));
+  else if (/^(0\.0\.0\.0|\[?::\]?)/.test(oh) || /^:\d+$/.test(oh)) warnings.push(h("p", { class: "alert warn" }, "Ollama escucha en toda la red (OLLAMA_HOST=" + oh + "): su puerto 11434 se puede usar sin clave. No lo redirijas en el router; abre solo el del panel."));
+  fill($("#access-warnings"), warnings);
+  renderKeys();
+  renderEndpoints();
+  renderExample();
+}
+
+function renderKeys() {
+  const list = (accessInfo && accessInfo.keys) || [];
+  fill($("#key-new"), lastKey ? h("div", { class: "key-once", role: "status" },
+    h("p", { style: "margin:0 0 6px" }, h("strong", {}, "Clave «" + lastKey.name + "». "), "Cópiala ahora: no se vuelve a mostrar."),
+    h("div", { class: "copy-row" }, h("code", { id: "key-secret" }, lastKey.key), h("button", { type: "button", class: "primary", "data-copy": "key-secret" }, "Copiar clave"))) : null);
+  if (!list.length) { fill($("#keys"), h("p", { class: "empty" }, "Todavía no hay claves. Crea una por cada app o equipo: así puedes revocar uno sin afectar a los demás.")); return; }
+  fill($("#keys"), h("div", { class: "table-wrap" }, h("table", { class: "stack" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Nombre"), h("th", {}, "Termina en"), h("th", {}, "Creada"), h("th", {}, "Último uso"), h("th", { class: "num" }, "Peticiones"),
+      h("th", {}, h("span", { class: "visually-hidden" }, "Acciones")))),
+    h("tbody", {}, list.map((k) => h("tr", {},
+      h("td", { class: "model", "data-label": "Nombre" }, k.name),
+      h("td", { "data-label": "Termina en" }, h("code", {}, "…" + k.hint)),
+      h("td", { "data-label": "Creada" }, fmtDate(k.created * 1000)),
+      h("td", { "data-label": "Último uso" }, k.last_used ? fmtRelative(k.last_used * 1000) : "Nunca"),
+      h("td", { class: "num", "data-label": "Peticiones" }, String(k.requests)),
+      h("td", { class: "row-actions" }, h("button", { type: "button", class: "danger", onclick: async () => {
+        if (!(await confirmAction("Revocar «" + k.name + "»", "Las apps que usen esta clave dejarán de tener acceso al momento. No se puede deshacer.", "Revocar clave"))) return;
+        try { await api("/panel/keys/" + k.id, { method: "DELETE" }); if (lastKey && lastKey.id === k.id) lastKey = null; renderAccess(); }
+        catch (e) { notify(e.message, "error"); }
+      } }, "Revocar"))))))));
+}
+
+function renderEndpoints() {
+  const host = location.hostname;
+  const rows = [[apiBase(), "Panel: Ollama y motores", h("span", { class: "ok" }, "Con clave"), "api-main"]];
+  rows.push(["http://" + host + ":11434/v1", "Ollama directo", h("span", { class: "bad" }, "Sin clave"), "api-ollama"]);
+  for (const e of runningEngines()) rows.push([engineUrl(e), e.alias + " · " + e.engine + " directo", h("span", { class: "bad" }, "Sin clave"), "api-e-" + e.id]);
+  fill($("#endpoints"), h("div", { class: "table-wrap" }, h("table", { class: "stack" },
+    h("thead", {}, h("tr", {}, h("th", {}, "Dirección"), h("th", {}, "Sirve"), h("th", {}, "Protección"), h("th", {}, h("span", { class: "visually-hidden" }, "Copiar")))),
+    h("tbody", {}, rows.map(([url, what, prot, id]) => h("tr", {},
+      h("td", { "data-label": "Dirección" }, h("code", { id }, url)),
+      h("td", { "data-label": "Sirve" }, what),
+      h("td", { "data-label": "Protección" }, prot),
+      h("td", { class: "row-actions" }, h("button", { type: "button", class: "quiet", "data-copy": id }, "Copiar"))))))),
+    h("p", { class: "note" }, "Para conectarte desde fuera, usa solo la primera. Las direcciones directas sirven sin clave: déjalas para la red de casa."));
+}
+
+function renderExample() {
+  const sel = $("#example-model");
+  const prev = sel.value;
+  const ollama = (state.tags || []).filter((m) => (m.capabilities || []).includes("completion")).map((m) => m.name);
+  const eng = (state.engines || []).filter((e) => e.status === "ready").map((e) => e.alias);
+  const names = [...new Set(eng.concat(ollama))];
+  fill(sel, names.map((n) => h("option", { value: n }, n)));
+  if (names.includes(prev)) sel.value = prev;
+  const model = sel.value || "nombre-del-modelo";
+  const key = lastKey ? lastKey.key : "TU_CLAVE";
+  $("#example-curl").textContent = "curl " + apiBase() + "/chat/completions \\\n  -H \"Authorization: Bearer " + key + "\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\": \"" + model + "\", \"messages\": [{\"role\": \"user\", \"content\": \"Hola\"}]}'";
+  $("#example-py").textContent = "from openai import OpenAI\n\nclient = OpenAI(base_url=\"" + apiBase() + "\", api_key=\"" + key + "\")\nr = client.chat.completions.create(\n    model=\"" + model + "\",\n    messages=[{\"role\": \"user\", \"content\": \"Hola\"}],\n)\nprint(r.choices[0].message.content)";
+}
+$("#example-model").addEventListener("change", renderExample);
+
+$("#key-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = e.target.name.value.trim();
+  if (!name) return;
+  try {
+    const res = await api("/panel/keys", { body: { name } });
+    lastKey = { key: res.key, name: res.record.name, id: res.record.id };
+    e.target.reset();
+    await renderAccess();
+    $("#key-secret").focus();
+  } catch (err) { notify(err.message, "error"); }
+});
+
+/* ================================================================ vista: actualizaciones */
+
+let updateInfo = null;
+
+function renderUpdateBadge() {
+  const u = updateInfo;
+  $("#nav-count-update").textContent = u && u.behind ? String(u.behind) : "";
+}
+
+function renderUpdate() {
+  const u = updateInfo;
+  const box = $("#update-info");
+  if (!u) return;
+  $("#set-auto-check").checked = u.settings.auto_check;
+  $("#set-auto-install").checked = u.settings.auto_install;
+  $("#set-auto-install").disabled = !u.settings.auto_check;
+  $("#update-apply").hidden = !u.behind;
+  $("#update-check").disabled = !!u.unavailable || u.updating;
+  if (u.unavailable) { fill(box, h("p", { class: "empty", style: "padding-top:0" }, u.unavailable)); fill($("#update-log")); return; }
+  const [hash, subject, date] = (u.current || "").split("\t");
+  const rows = [
+    ["Versión instalada", hash + " · " + (subject || "")],
+    ["Fecha", date ? fmtDate(date) : "?"],
+    ["Repositorio", (u.remote || "") + " · " + (u.branch || "")],
+    ["Última comprobación", u.checked ? fmtRelative(u.checked * 1000) : "Todavía no"],
+    ["Estado", u.error ? h("span", { class: "bad" }, u.error) : u.behind ? h("span", { class: "warn" }, u.behind + " cambio" + (u.behind === 1 ? "" : "s") + " nuevo" + (u.behind === 1 ? "" : "s"))
+      : u.checked ? h("span", { class: "ok" }, "Al día") : "Sin comprobar"],
+  ];
+  if (u.dirty) rows.push(["Aviso", h("span", { class: "warn" }, "Hay cambios locales en la copia instalada: la actualización automática se salta hasta que se resuelvan.")]);
+  if (!u.managed) rows.push(["Reinicio", "El panel no corre como servicio systemd: tras actualizar tendrás que reiniciarlo a mano."]);
+  fill(box, h("dl", { class: "spec" }, rows.map(([k, v]) => h("div", {}, h("dt", {}, k), h("dd", {}, v)))));
+  fill($("#update-log"), u.log && u.log.length ? h("ul", { class: "update-log", "aria-label": "Cambios pendientes" },
+    u.log.map((c) => h("li", {}, h("code", {}, c.hash), h("span", {}, c.subject), h("span", { class: "note", style: "margin:0" }, c.date ? fmtDate(c.date) : "")))) : null);
+}
+
+async function loadUpdate() {
+  try { updateInfo = await api("/panel/update"); } catch (e) { fill($("#update-info"), h("p", { class: "error-text" }, e.message)); return; }
+  renderUpdate();
+  renderUpdateBadge();
+}
+
+$("#update-check").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  try { updateInfo = await api("/panel/update/check", { body: {} }); }
+  catch (err) { notify(err.message, "error"); await loadUpdate(); return; }
+  finally { e.target.disabled = false; }
+  renderUpdate();
+  renderUpdateBadge();
+});
+
+/** Tras actualizar, el servicio se reinicia: esperar a que vuelva y recargar la página con el código nuevo. */
+async function waitForRestart() {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try { const r = await fetch("/panel/update", { cache: "no-store" }); if (r.ok) { location.reload(); return; } } catch (e) { /* aún reiniciando */ }
+  }
+  notify("El panel no ha vuelto tras 2 minutos. Revisa el servicio en el servidor: systemctl status ollama-panel", "error");
+}
+
+$("#update-apply").addEventListener("click", async (e) => {
+  const btn = e.target;
+  btn.disabled = true;
+  const run = async (force) => {
+    const res = await api("/panel/update/apply", { body: { force } });
+    notify(res.message);
+    if (res.restarting) { fill($("#update-info"), h("p", { class: "note" }, "Reiniciando el panel con la versión nueva…")); waitForRestart(); }
+    else loadUpdate();
+  };
+  try { await run(false); }
+  catch (err) {
+    if (/^Ahora no:/.test(err.message) && await confirmAction("Actualizar igualmente", err.message + " Si actualizas ahora, se interrumpe lo que esté en marcha.", "Actualizar y reiniciar")) {
+      try { await run(true); } catch (err2) { notify(err2.message, "error"); }
+    } else if (!/^Ahora no:/.test(err.message)) notify(err.message, "error");
+  } finally { btn.disabled = false; }
+});
+
+for (const id of ["set-auto-check", "set-auto-install"]) {
+  $("#" + id).addEventListener("change", async () => {
+    try {
+      const s = await api("/panel/settings", { body: { auto_check: $("#set-auto-check").checked, auto_install: $("#set-auto-install").checked } });
+      updateInfo.settings = s;
+      renderUpdate();
+    } catch (e) { notify(e.message, "error"); }
+  });
+}
+
 /* ================================================================ vista: registros */
 
 async function renderLogs() {
@@ -1444,7 +1644,7 @@ $("#log-lines").addEventListener("change", renderLogs);
 
 /* ================================================================ navegación, tema y ciclo de refresco */
 
-const VIEWS = ["modelos", "motores", "descargar", "subir", "cuantizar", "variante", "chat", "entrenamiento", "registros"];
+const VIEWS = ["acceso", "actualizar", "modelos", "motores", "descargar", "subir", "cuantizar", "variante", "chat", "entrenamiento", "registros"];
 function currentView() {
   const v = location.hash.slice(1);
   return VIEWS.includes(v) ? v : "modelos";
@@ -1464,6 +1664,8 @@ function route() {
   $("#nav-toggle").setAttribute("aria-expanded", "false");
   if (view === "modelos") renderModelsView();
   if (view === "motores") enterEngines();
+  if (view === "acceso") refreshStatus().then(renderAccess);
+  if (view === "actualizar") loadUpdate();
   if (view === "chat") fillChatSelect();
   if (view === "entrenamiento") { renderTrainEnv(); renderDatasets(); renderJobs(); }
   if (view === "registros") renderLogs();
@@ -1507,3 +1709,4 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && cu
 
 route();
 refreshModels();
+loadUpdate(); // marca en el riel si hay una versión nueva

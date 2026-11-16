@@ -47,14 +47,25 @@ command -v python3 >/dev/null || die "falta python3 (sudo apt install python3)."
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' || die "se necesita Python 3.8 o superior."
 command -v ollama >/dev/null || echo "Aviso: no encuentro el comando ollama en el PATH; el panel espera la API en 127.0.0.1:11434."
 
-echo "== Copiando el panel a $APP_DIR"
-mkdir -p "$APP_DIR"
-cp -r "$SRC_DIR/server.py" "$SRC_DIR/static" "$SRC_DIR/training" "$APP_DIR/"
-chown -R root:root "$APP_DIR"
-chmod -R a+rX "$APP_DIR"
-
 mkdir -p "$DATA_DIR"
 chown "$PANEL_USER": "$DATA_DIR"
+
+# La app instalada es un clon de git del repositorio, propiedad del usuario del servicio:
+# así el panel puede actualizarse solo desde GitHub (git pull y reinicio).
+REPO_URL="$(git -C "$SRC_DIR" remote get-url origin 2>/dev/null || true)"
+[ -n "$REPO_URL" ] || REPO_URL="https://github.com/hernanJardon/ia-server-web.git"
+command -v git >/dev/null || die "falta git (sudo apt install git)."
+if [ -d "$APP_DIR/.git" ]; then
+  echo "== Actualizando $APP_DIR desde $REPO_URL"
+  chown -R "$PANEL_USER": "$APP_DIR"
+  sudo -u "$PANEL_USER" -H git -C "$APP_DIR" pull --ff-only
+else
+  echo "== Clonando $REPO_URL en $APP_DIR"
+  rm -rf "$APP_DIR"
+  mkdir -p "$APP_DIR"
+  chown "$PANEL_USER": "$APP_DIR"
+  sudo -u "$PANEL_USER" -H git clone --quiet "$REPO_URL" "$APP_DIR"
+fi
 
 # Leer los logs de Ollama con journalctl, y los archivos GGUF de los modelos para cuantizarlos
 if getent group systemd-journal >/dev/null; then usermod -aG systemd-journal "$PANEL_USER"; fi
@@ -71,6 +82,9 @@ PANEL_HOST=0.0.0.0
 PANEL_PORT=$PANEL_PORT
 PANEL_DATA=$DATA_DIR
 PANEL_PASSWORD=$PASS
+# HTTPS (necesario si te conectas desde fuera sin VPN): certificado y clave en PEM
+# PANEL_TLS_CERT=/etc/ollama-panel/cert.pem
+# PANEL_TLS_KEY=/etc/ollama-panel/key.pem
 EOF
   chown root:"$PANEL_USER" "$ENV_FILE"
   chmod 640 "$ENV_FILE"
@@ -136,6 +150,7 @@ User=$PANEL_USER
 EnvironmentFile=$ENV_FILE
 WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/env python3 $APP_DIR/server.py
+# on-failure también relanza el panel cuando sale a propósito tras actualizarse (código 3)
 Restart=on-failure
 RestartSec=3
 # Las instancias de llama-server que lanza el panel se cierran con él
