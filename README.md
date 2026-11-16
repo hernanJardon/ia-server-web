@@ -50,6 +50,7 @@ La configuración está en `/etc/ollama-panel.env`; tras cambiarla, `sudo system
 | `PANEL_HOST` / `PANEL_PORT` | `0.0.0.0` / `8080` | Dónde escucha el panel |
 | `PANEL_PASSWORD` | vacía | Si se define, el navegador la pide (HTTP Basic, cualquier usuario). No se usa para la API `/v1`, que va con claves |
 | `PANEL_TLS_CERT` / `PANEL_TLS_KEY` | vacías | Certificado y clave PEM: si están las dos, el panel y la API se sirven por HTTPS |
+| `PANEL_TRUSTED_PROXIES` | vacía | IPs de tu proxy inverso (Nginx Proxy Manager, Caddy…), separadas por comas: de ellas se toma la IP real del cliente para el bloqueo por intentos fallidos |
 | `PANEL_DATA` | `/var/lib/ollama-panel` | Datasets, trabajos y entornos |
 | `TRAIN_PYTHON` | `$PANEL_DATA/venv/bin/python` | Intérprete con torch y peft |
 | `LLAMA_CPP_DIR` | `$PANEL_DATA/llama.cpp` | Para `llama-quantize` y la conversión de adaptadores |
@@ -61,6 +62,14 @@ El panel puede borrar modelos y lanzar procesos: ponle contraseña. Las peticion
 - **API `/v1` con claves.** Cada app o equipo lleva su propia clave (`Authorization: Bearer sk-op-…`). El panel solo guarda su SHA-256, así que la clave se ve una única vez, al crearla. Revocar una no afecta a las demás.
 - **Intentos fallidos.** Tras 20 intentos fallidos de clave o contraseña en 10 minutos, esa IP queda bloqueada 10 minutos. Si pones un proxy inverso delante, todas las peticiones llegan con la IP del proxy y comparten ese límite.
 - **Desde fuera de casa, lo recomendado es una VPN** ([Tailscale](https://tailscale.com) o WireGuard): no abres puertos en el router.
+- **Detrás de Nginx Proxy Manager** (o cualquier proxy con HTTPS): reenvía a `http://IP-DEL-SERVIDOR:8080` (panel sin `--https`), pide el certificado de Let's Encrypt en NPM y añade `PANEL_TRUSTED_PROXIES=<IP de NPM>` a `/etc/ollama-panel.env`. En la pestaña *Advanced* de NPM:
+  ```nginx
+  client_max_body_size 0;          # subir GGUF y datasets de varios GB
+  proxy_request_buffering off;
+  proxy_buffering off;              # progreso y respuestas en directo
+  proxy_read_timeout 3600s;         # cargar un modelo grande puede tardar
+  proxy_send_timeout 3600s;
+  ```
 - **Si abres un puerto**, activa HTTPS (`PANEL_TLS_CERT` y `PANEL_TLS_KEY`, por ejemplo con Let's Encrypt). Redirige solo el puerto del panel, nunca el 11434 de Ollama ni los de los motores: esos responden sin clave.
 - Con `OLLAMA_HOST=0.0.0.0`, Ollama sigue abierto en tu red local sin clave; la vista Acceso lo avisa. Para cerrarlo, deja `OLLAMA_HOST=127.0.0.1` en el servicio de Ollama (`sudo systemctl edit ollama`). Las apps de casa que lo usaban directamente pasan entonces a usar el panel con una clave.
 

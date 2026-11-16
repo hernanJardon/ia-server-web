@@ -43,6 +43,8 @@ PORT = int(os.environ.get("PANEL_PORT", "8080"))
 PASSWORD = os.environ.get("PANEL_PASSWORD", "")
 DATA = os.path.abspath(os.environ.get("PANEL_DATA", os.path.join(ROOT, "data")))
 LLAMA_CPP_DIR = os.environ.get("LLAMA_CPP_DIR", "")
+# IPs de proxies inversos de confianza (p. ej. Nginx Proxy Manager): de ellos se toma la IP real del cliente.
+TRUSTED_PROXIES = {p.strip() for p in os.environ.get("PANEL_TRUSTED_PROXIES", "").split(",") if p.strip()}
 TLS_CERT = os.environ.get("PANEL_TLS_CERT", "")
 TLS_KEY = os.environ.get("PANEL_TLS_KEY", "")
 UPLOADS = os.path.join(DATA, "uploads")
@@ -1067,10 +1069,19 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- seguridad
 
+    def client_ip(self):
+        """IP real del cliente: la que añade un proxy de confianza, o la de la conexión."""
+        ip = self.client_address[0]
+        if ip in TRUSTED_PROXIES:
+            real = self.headers.get("X-Real-IP") or (self.headers.get("X-Forwarded-For") or "").split(",")[-1].strip()
+            if real:
+                return real
+        return ip
+
     def authorized(self):
         if not PASSWORD:
             return True
-        ip = self.client_address[0]
+        ip = self.client_ip()
         if limiter.blocked(ip):
             self.fail(429, "Demasiados intentos fallidos desde esta dirección. Espera unos minutos.")
             return False
@@ -1184,7 +1195,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def gateway(self):
-        ip = self.client_address[0]
+        ip = self.client_ip()
         if limiter.blocked(ip):
             return self.oai_error(429, "Demasiados intentos fallidos desde esta dirección. Espera unos minutos.", "rate_limited")
         auth = self.headers.get("Authorization", "")
@@ -1325,9 +1336,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, jobs.start(parse_quantize_request(self.read_json()), kind="quantize"))
         if rest == "access" and m == "GET":
             env = ollama_service_env() or {}
+            via_proxy = bool(self.headers.get("X-Forwarded-For") or self.headers.get("X-Real-IP"))
             return self.send_json(200, {"keys": keys.public(), "password_set": bool(PASSWORD), "tls": bool(TLS_CERT),
                                         "port": PORT, "ollama_host": env.get("OLLAMA_HOST"), "ollama_env_known": bool(env),
-                                        "same_host": SAME_HOST})
+                                        "same_host": SAME_HOST, "via_proxy": via_proxy,
+                                        "proxy_ip": self.client_address[0] if via_proxy else None,
+                                        "proxy_trusted": self.client_address[0] in TRUSTED_PROXIES})
         if rest == "keys" and m == "POST":
             secret, rec = keys.create(self.read_json().get("name"))
             return self.send_json(200, {"key": secret, "record": rec})

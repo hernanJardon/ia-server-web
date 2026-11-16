@@ -1639,7 +1639,9 @@ async function renderAccess() {
   const a = accessInfo;
   const warnings = [];
   if (!a.password_set) warnings.push(h("p", { class: "alert" }, "El panel no tiene contraseña: quien llegue a esta dirección puede borrar modelos y crear claves. Defínela en PANEL_PASSWORD (/etc/ollama-panel.env) antes de abrirlo a internet."));
-  if (!a.tls && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") warnings.push(h("p", { class: "alert warn" }, "El panel va por HTTP. En tu red local es aceptable; para conectarte desde fuera usa una VPN o activa HTTPS (abajo se explica cómo)."));
+  // Lo que cuenta es lo que ve el navegador: detrás de un proxy con HTTPS (NPM) el panel puede ir por HTTP internamente.
+  if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") warnings.push(h("p", { class: "alert warn" }, "Estás entrando por HTTP. En tu red local es aceptable, pero el micrófono del chat no funcionará; para conectarte desde fuera usa una VPN o HTTPS (abajo se explica cómo)."));
+  if (a.via_proxy && !a.proxy_trusted) warnings.push(h("p", { class: "alert warn" }, "Llegas a través de un proxy (" + a.proxy_ip + ") que el panel no tiene como de confianza: todos los clientes comparten su IP y el bloqueo por intentos fallidos os afectaría a todos a la vez. Añade PANEL_TRUSTED_PROXIES=" + a.proxy_ip + " a /etc/ollama-panel.env y reinicia el panel."));
   const oh = a.ollama_host || "";
   if (!a.ollama_env_known) warnings.push(h("p", { class: "alert warn" }, "No se pudo leer la configuración del servicio de Ollama. Si OLLAMA_HOST es 0.0.0.0, el puerto 11434 sigue abierto en la red sin clave."));
   else if (/^(0\.0\.0\.0|\[?::\]?)/.test(oh) || /^:\d+$/.test(oh)) warnings.push(h("p", { class: "alert warn" }, "Ollama escucha en toda la red (OLLAMA_HOST=" + oh + "): su puerto 11434 se puede usar sin clave. No lo redirijas en el router; abre solo el del panel."));
