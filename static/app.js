@@ -1203,38 +1203,128 @@ function speakableText(text) {
   return text.replace(/```[\s\S]*?```/g, " (código omitido) ").replace(/[*_#>`|]/g, "").replace(/\s+/g, " ").trim().slice(0, 4000);
 }
 
-/** Voz con /v1/audio/speech de Ollama; si el modelo no la genera, voz del navegador, y se dice cuál sonó. */
-async function speak(text, bubble) {
-  const input = speakableText(text);
-  if (!input) return;
-  const model = $("#chat-tts-model").value;
-  const note = h("div", { class: "stats" }, "Generando voz…");
-  bubble.append(note);
-  if (model) {
-    try {
-      const res = await fetch("/ollama-v1/audio/speech", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, input, voice: "default", response_format: "wav" }) });
-      const type = res.headers.get("Content-Type") || "";
-      if (res.ok && type.startsWith("audio")) {
-        const url = URL.createObjectURL(await res.blob());
-        const player = h("audio", { controls: true, src: url });
-        note.replaceWith(player, h("div", { class: "stats" }, "Voz de " + model));
-        player.play().catch(() => { /* el navegador puede exigir un clic: queda el reproductor */ });
-        return;
-      }
-      const body = await res.text();
-      let msg = body;
-      try { const j = JSON.parse(body); msg = (j.error && (j.error.message || j.error)) || body; } catch (e) { /* texto */ }
-      note.textContent = model + " no generó voz (" + String(msg).slice(0, 140) + "). Uso la voz del navegador.";
-    } catch (e) { note.textContent = "No se pudo pedir la voz a Ollama (" + e.message + "). Uso la voz del navegador."; }
-  } else note.textContent = "Voz del navegador";
-  if (!window.speechSynthesis) { note.textContent += " Este navegador no tiene síntesis de voz."; return; }
+/** Frases de hasta ~220 caracteres: la primera se genera rápido y suena mientras se preparan las demás. */
+function splitSentences(text) {
+  const parts = text.match(/[^.!?¡¿…\n]+[.!?…]*["»)]*\s*|[¡¿][^.!?…\n]*[.!?…]*\s*/g) || [text];
+  const out = [];
+  let cur = "";
+  for (const p of parts) {
+    if ((cur + p).length > 220 && cur) { out.push(cur.trim()); cur = ""; }
+    cur += p;
+    // La primera frase va sola, en cuanto tiene algo de cuerpo: es la que marca cuándo empieza a sonar.
+    if (!out.length && cur.trim().length >= 12 && /[.!?…]["»)]*\s*$/.test(cur)) { out.push(cur.trim()); cur = ""; }
+  }
+  if (cur.trim()) out.push(cur.trim());
+  // La voz se genera a ~0,6x tiempo real: un primer trozo largo retrasa mucho el primer sonido.
+  // Se corta en la pausa (coma, "y", "porque"…) más cercana al carácter 70 entre el 30 y el 120;
+  // sin pausas, en el último espacio antes del 80.
+  if (out.length && out[0].length > 90) {
+    const first = out[0];
+    let cut = -1, best = Infinity;
+    for (const m of first.matchAll(/[,;:](?=\s)|\s(?=(?:y|o|pero|porque|que|cuando|aunque)\s)/g)) {
+      const at = m.index + (m[0] === " " ? 0 : 1);
+      if (at >= 30 && at <= 120 && Math.abs(at - 70) < best && first.length - at > 15) { best = Math.abs(at - 70); cut = at; }
+    }
+    if (cut < 0) cut = first.lastIndexOf(" ", 80);
+    if (cut > 20) out.splice(0, 1, first.slice(0, cut).trim(), first.slice(cut).trim());
+  }
+  return out.filter((s) => /[\p{L}\p{N}]/u.test(s));
+}
+
+/** Ollama envía el WAV en streaming con tamaños 0xFFFFFFFF; se corrigen para que todos los navegadores lo reproduzcan. */
+function fixWavSizes(buf) {
+  const v = new DataView(buf);
+  if (buf.byteLength < 44 || v.getUint32(0, false) !== 0x52494646) return buf; // "RIFF"
+  v.setUint32(4, buf.byteLength - 8, true);
+  let off = 12;
+  while (off + 8 <= buf.byteLength) {
+    const id = v.getUint32(off, false);
+    if (id === 0x64617461) { v.setUint32(off + 4, buf.byteLength - off - 8, true); break; } // "data"
+    off += 8 + v.getUint32(off + 4, true);
+  }
+  return buf;
+}
+
+const tts = { ctrl: null, audio: null, stopBtn: null };
+
+/** Corta la voz en curso: la petición a Ollama (que si no bloquearía el siguiente mensaje) y lo que suene. */
+function stopSpeech() {
+  if (tts.ctrl) tts.ctrl.abort();
+  tts.ctrl = null;
+  if (tts.audio) { tts.audio.pause(); tts.audio = null; }
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  if (tts.stopBtn) { tts.stopBtn.remove(); tts.stopBtn = null; }
+}
+
+function browserSpeak(input) {
+  if (!window.speechSynthesis) return false;
   const u = new SpeechSynthesisUtterance(input);
   const es = speechSynthesis.getVoices().find((v) => v.lang && v.lang.toLowerCase().startsWith("es"));
   if (es) u.voice = es;
   u.lang = es ? es.lang : "es-ES";
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
+  return true;
+}
+
+/**
+ * Voz con /v1/audio/speech de Ollama, frase a frase: genera la siguiente mientras suena la actual.
+ * Si el modelo no genera voz, voz del navegador, y se dice cuál sonó.
+ */
+async function speak(text, bubble) {
+  const input = speakableText(text);
+  if (!input) return;
+  stopSpeech();
+  const model = $("#chat-tts-model").value;
+  const note = h("div", { class: "stats" }, "Generando voz…");
+  const ctrl = new AbortController();
+  tts.ctrl = ctrl;
+  tts.stopBtn = h("button", { type: "button", class: "quiet", style: "margin-top:6px", onclick: stopSpeech }, "Detener voz");
+  bubble.append(note, tts.stopBtn);
+  const done = (msg) => { note.textContent = msg; if (tts.ctrl === ctrl) { tts.ctrl = null; if (tts.stopBtn) { tts.stopBtn.remove(); tts.stopBtn = null; } } };
+  if (!model) { done(browserSpeak(input) ? "Voz del navegador" : "Este navegador no tiene síntesis de voz."); return; }
+
+  const sentences = splitSentences(input);
+  const fetchOne = async (s) => {
+    const res = await fetch("/ollama-v1/audio/speech", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, input: s, voice: "default", response_format: "wav" }), signal: ctrl.signal });
+    const type = res.headers.get("Content-Type") || "";
+    if (res.ok && type.startsWith("audio")) return new Blob([fixWavSizes(await res.arrayBuffer())], { type: "audio/wav" });
+    const body = await res.text();
+    let msg = body;
+    try { const j = JSON.parse(body); msg = (j.error && (j.error.message || j.error)) || body; } catch (e) { /* texto */ }
+    throw new Error(String(msg).slice(0, 140));
+  };
+  const playBlob = (blob) => new Promise((resolve) => {
+    const a = new Audio(URL.createObjectURL(blob));
+    tts.audio = a;
+    a.onended = a.onerror = () => resolve();
+    a.play().catch(() => resolve());
+  });
+
+  const blobs = [];
+  const t0 = performance.now();
+  try {
+    let next = fetchOne(sentences[0]);
+    for (let i = 0; i < sentences.length; i++) {
+      note.textContent = "Generando voz" + (sentences.length > 1 ? " (frase " + (i + 1) + " de " + sentences.length + ")" : "") + "…";
+      const blob = await next;
+      blobs.push(blob);
+      next = i + 1 < sentences.length ? fetchOne(sentences[i + 1]) : null; // se genera mientras suena esta
+      if (next) next.catch(() => { /* el error se recoge al esperarla */ });
+      if (ctrl.signal.aborted) return;
+      note.textContent = "Reproduciendo" + (sentences.length > 1 ? " frase " + (i + 1) + " de " + sentences.length : "") + "…";
+      await playBlob(blob);
+      if (ctrl.signal.aborted) return;
+    }
+    // Al final quedan los reproductores para volver a escucharla (uno por frase).
+    note.before(h("div", {}, blobs.map((b) => h("audio", { controls: true, src: URL.createObjectURL(b) }))));
+    done("Voz de " + model + " · " + ((performance.now() - t0) / 1000).toFixed(1).replace(".", ",") + " s");
+  } catch (e) {
+    if (e.name === "AbortError") { done("Voz detenida."); return; }
+    done(model + " no generó voz (" + e.message + "). Uso la voz del navegador.");
+    browserSpeak(input);
+  }
 }
 
 /** Chat con una instancia de motor: API de OpenAI con streaming SSE, a través del proxy del panel. */
@@ -1306,6 +1396,7 @@ $("#chat-form").addEventListener("submit", async (e) => {
   const typed = input.value.trim();
   const text = typed || (audio ? "Responde a lo que digo en el audio, en el mismo idioma." : "");
   if (!text || !target || chat.ctrl || voice.recorder) { if (!text) input.focus(); return; }
+  stopSpeech(); // una voz aún generándose ocuparía el modelo y este mensaje esperaría detrás
   const model = target.model;
   const userMsg = { role: "user", content: text };
   const imgFile = !$("#chat-image-wrap").hidden && $("#chat-image").files[0];
@@ -1383,6 +1474,7 @@ $("#chat-input").addEventListener("keydown", (e) => {
 $("#chat-stop").addEventListener("click", () => chat.ctrl && chat.ctrl.abort());
 $("#chat-clear").addEventListener("click", () => {
   if (chat.ctrl) chat.ctrl.abort();
+  stopSpeech();
   chat.messages = [];
   $$(".msg", $("#chat-log")).forEach((m) => m.remove());
   $("#chat-empty").hidden = false;
