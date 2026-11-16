@@ -465,7 +465,9 @@ function renderGpus() {
       const ownerText = own.names.length ? own.names.join(", ")
         : g.mem_used > 0.3 * GIB ? "Sin modelos del panel" : "Libre";
       return h("div", { class: "gpu" },
-        h("div", { class: "name" }, h("span", {}, "GPU " + g.index), h("span", {}, g.temp != null ? g.temp.toFixed(0) + " °C" : "")),
+        h("div", { class: "name" }, h("span", {}, "GPU " + g.index), h("span", {},
+          [g.power != null ? g.power.toFixed(0) + (g.power_limit ? " / " + g.power_limit.toFixed(0) : "") + " W" : "",
+           g.temp != null ? g.temp.toFixed(0) + " °C" : ""].filter(Boolean).join(" · "))),
         h("div", { class: "figure" }, fmtGiB(g.mem_used), h("small", {}, "/ " + fmtGiB(g.mem_total) + " GiB")),
         h("div", { class: "meter" + (pct > 90 ? " high" : ""), role: "meter", "aria-label": "Memoria GPU " + g.index,
           "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": pct.toFixed(0) }, h("i", { style: "width:" + pct.toFixed(1) + "%" })),
@@ -477,6 +479,8 @@ function renderGpus() {
   const kv = [];
   if (sys.mem_total) kv.push(["RAM libre", fmtGiB(sys.mem_available) + " de " + fmtGiB(sys.mem_total) + " GiB"]);
   if (sys.disk) kv.push(["Disco libre (modelos)", fmtGB(sys.disk.free) + " de " + fmtGB(sys.disk.total)]);
+  const watts = sys.gpus.filter((g) => g.power != null);
+  if (watts.length) kv.push(["Consumo de las GPU", watts.reduce((s, g) => s + g.power, 0).toFixed(0) + " W"]);
   if (sys.load) kv.push(["Carga CPU (1, 5, 15 min)", sys.load.map((x) => x.toFixed(2)).join("  ") + " / " + sys.cpu_count + " núcleos"]);
   $("#host").replaceChildren(...kv.map(([k, v]) => h("div", {}, h("dt", {}, k), h("dd", {}, v))));
 }

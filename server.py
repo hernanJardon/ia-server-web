@@ -111,7 +111,8 @@ def system_info():
         num = lambda s: float(s) if re.match(r"^-?\d+(\.\d+)?$", s) else None
         try:
             out = subprocess.run(
-                [smi, "--query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+                [smi, "--query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu,temperature.gpu,"
+                 "power.draw,power.limit",
                  "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=8).stdout
             for line in out.strip().splitlines():
@@ -120,7 +121,10 @@ def system_info():
                     info["gpus"].append({"index": p[0], "uuid": p[1], "name": p[2],
                                          "mem_used": (num(p[3]) or 0) * 1048576,
                                          "mem_total": (num(p[4]) or 0) * 1048576,
-                                         "util": num(p[5]), "temp": num(p[6]), "procs": []})
+                                         "util": num(p[5]), "temp": num(p[6]), "procs": [],
+                                         # "[N/A]" en placas que no informan del consumo
+                                         "power": num(p[7]) if len(p) > 7 else None,
+                                         "power_limit": num(p[8]) if len(p) > 8 else None})
             by_uuid = {g["uuid"]: g for g in info["gpus"]}
             out = subprocess.run(
                 [smi, "--query-compute-apps=gpu_uuid,pid,used_memory", "--format=csv,noheader,nounits"],
